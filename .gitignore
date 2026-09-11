@@ -1,0 +1,16 @@
+# OS/editor noise
+.DS_Store
+Thumbs.db
+*.swp
+
+# Local dependencies and generated test output
+node_modules/
+coverage/
+playwright-report/
+test-results/
+
+# Temporary browser/server artifacts
+work/tmp/
+work/.tmp/
+*.log
+*.tmp
