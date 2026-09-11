@@ -72,6 +72,43 @@ const ownerMeta = {
   iona: { name: "イオナ", role: "術師", color: "#a891ff" }
 };
 
+const statusMeta = {
+  guard: {
+    order: 1, label: "装甲", short: unit => `盾${unit.guard}`,
+    active: unit => unit.guard > 0, shape: "shield", tone: "amber",
+    detail: unit => unit.persistentGuard
+      ? `装甲${unit.guard}。受けるダメージを先にこの値まで吸収し、吸収した分だけ減少。反撃姿勢の残りは次に別の行動を始める時に終了。`
+      : `装甲${unit.guard}。受けるダメージを先にこの値まで吸収し、吸収した分だけ減少。残りはターン終了で消える。`
+  },
+  ward: {
+    order: 2, label: "結界", short: () => "結",
+    active: unit => unit.ward === true, shape: "double-ring", tone: "violet",
+    detail: () => "次の状態異常か地形ダメージを1回無効。無効にした時に消費し、未使用なら持ち越す。"
+  },
+  rooted: {
+    order: 3, label: "移動不能", short: () => "鎖",
+    active: unit => unit.rooted === true, shape: "linked-square", tone: "blue",
+    detail: () => "このターンは移動できない。行動そのものは取り消さず、ターン終了で解除。"
+  },
+  marked: {
+    order: 4, label: "標的（狩人の印）", short: () => "標",
+    active: unit => unit.marked === true, shape: "crosshair-circle", tone: "yellow",
+    detail: () => "次に味方側から攻撃を受ける時、そのダメージ+3。発動時に消費し、未発動なら持ち越す。"
+  },
+  exposed: {
+    order: 5, label: "露出", short: () => "露",
+    active: unit => unit.exposed === true, shape: "warning-triangle", tone: "rose",
+    detail: () => "次に敵側からダメージを受ける時、そのダメージ+1。適用時に消費し、未発動なら持ち越す。"
+  },
+  charge: {
+    order: 6, label: "帯電", short: unit => `⚡${unit.charge}`,
+    active: unit => unit.charge > 0, shape: "lightning", tone: "orange",
+    detail: unit => `帯電${unit.charge}。このターンに実際に回復したHP（最大2）。連鎖火花の上下左右に隣接する敵へのダメージへ${unit.charge}加算。連鎖先がある時に消費し、ターン終了でも消える。`
+  }
+};
+
+let pinnedStatusPopover = null;
+
 const game = {
   turn: 1,
   phase: "planning",
@@ -97,6 +134,7 @@ const game = {
 
 const el = {
   board: document.querySelector("#battlefield"),
+  statusPopover: document.querySelector("#board-status-popover"),
   hand: document.querySelector("#hand"),
   intents: document.querySelector("#intent-list"),
   squad: document.querySelector("#squad-list"),
@@ -1821,7 +1859,90 @@ function render() {
   renderControls();
 }
 
+function activeStatusEntries(unit) {
+  return Object.entries(statusMeta)
+    .filter(([, meta]) => meta.active(unit))
+    .sort(([, a], [, b]) => a.order - b.order);
+}
+
+function statusFullDescription(key, unit) {
+  const meta = statusMeta[key];
+  return `${meta.label}：${meta.detail(unit)}`;
+}
+
+function statusAriaValue(key, unit, actual) {
+  const meta = statusMeta[key];
+  if (key === "guard" || key === "charge") {
+    const current = unit[key];
+    const previous = actual?.[key] || 0;
+    return actual && previous !== current
+      ? `${meta.label} ${previous}から${current}`
+      : `${meta.label}${current}`;
+  }
+  return meta.label;
+}
+
+function statusChanged(key, unit, actual) {
+  return Boolean(actual && actual[key] !== unit[key]);
+}
+
+function unitCellAriaLabel(unit, actual, projected, x, y, statuses = activeStatusEntries(unit)) {
+  const hp = actual && actual.hp !== unit.hp
+    ? `HP ${actual.hp}から${unit.hp}、最大${unit.maxHp}`
+    : `HP ${unit.hp}/${unit.maxHp}`;
+  return [
+    `${x + 1}列 ${y + 1}行`,
+    unit.side === "enemy" ? "敵" : "味方",
+    unit.name,
+    hp,
+    ...statuses.map(([key]) => statusAriaValue(key, unit, actual)),
+    projected ? "予測表示" : ""
+  ].filter(Boolean).join("、");
+}
+
+function closeStatusPopover(clearPin = false) {
+  if (clearPin) pinnedStatusPopover = null;
+  el.statusPopover.hidden = true;
+  el.statusPopover.setAttribute("aria-hidden", "true");
+  el.statusPopover.innerHTML = "";
+}
+
+function showStatusPopover(unit, priorityKey = null, pin = false) {
+  const statuses = activeStatusEntries(unit);
+  if (!statuses.length) {
+    closeStatusPopover(pin);
+    return;
+  }
+  if (pin) pinnedStatusPopover = { unit: { ...unit }, priorityKey };
+  const ordered = priorityKey
+    ? [...statuses].sort(([keyA, metaA], [keyB, metaB]) =>
+      (keyA === priorityKey ? -1 : keyB === priorityKey ? 1 : metaA.order - metaB.order))
+    : statuses;
+  el.statusPopover.innerHTML = `
+    <div class="status-popover-heading"><strong>${unit.name}</strong><span>${pin ? "説明を固定中" : "有効な状態"}</span></div>
+    <div class="status-popover-list">
+      ${ordered.map(([key, meta]) => `
+        <section class="status-popover-item tone-${meta.tone}" data-status="${key}">
+          <strong>${meta.short(unit)}｜${meta.label}</strong>
+          <p>${meta.detail(unit)}</p>
+        </section>
+      `).join("")}
+    </div>
+  `;
+  el.statusPopover.hidden = false;
+  el.statusPopover.setAttribute("aria-hidden", "true");
+}
+
+function restorePinnedStatusPopover() {
+  if (pinnedStatusPopover) {
+    showStatusPopover(pinnedStatusPopover.unit, pinnedStatusPopover.priorityKey, true);
+    return;
+  }
+  closeStatusPopover(false);
+}
+
 function renderBoard() {
+  closeStatusPopover(true);
   const valid = new Set(validCells().map(keyOf));
   const context = timelineDisplayContext();
   const previewState = context.state;
@@ -1857,7 +1978,21 @@ function renderBoard() {
       if (unit) {
         const actual = getUnit(unit.id);
         const hasMoved = Boolean(actual && (actual.x !== unit.x || actual.y !== unit.y));
-        cell.appendChild(renderUnit(unit, isPreview || hasMoved, actual));
+        const projected = isPreview || hasMoved;
+        const statuses = activeStatusEntries(unit);
+        cell.setAttribute("aria-label", unitCellAriaLabel(unit, actual, projected, x, y, statuses));
+        const token = renderUnit(unit, projected, actual, statuses);
+        cell.appendChild(token);
+        if (statuses.length) {
+          const description = document.createElement("span");
+          description.id = `status-desc-${unit.id}`;
+          description.className = "sr-only status-description";
+          description.textContent = statuses.map(([key]) => statusFullDescription(key, unit)).join(" ");
+          cell.setAttribute("aria-describedby", description.id);
+          cell.appendChild(description);
+          cell.addEventListener("focus", () => showStatusPopover(unit));
+          cell.addEventListener("blur", () => restorePinnedStatusPopover());
+        }
       }
       cell.addEventListener("click", () => handleCellClick(x, y));
       el.board.appendChild(cell);
@@ -1869,20 +2004,14 @@ function previewDisplayUnitAt(state, x, y) {
   return state.units.find(unit => unit.hp > 0 && unit.x === x && unit.y === y);
 }
 
-function renderUnit(unit, projected = false, actual = unit) {
+function renderUnit(unit, projected = false, actual = unit, statuses = activeStatusEntries(unit)) {
   const token = document.createElement("div");
   const selected = game.moveUnitId === unit.id ? " selected-unit" : "";
   const hit = game.flashUnitId === unit.id ? " hit" : "";
   const preview = projected ? " projected-unit" : "";
-  token.className = `unit ${unit.side}${selected}${hit}${preview}`;
-  const badges = [
-    unit.guard ? `◆${unit.guard}` : "",
-    unit.ward ? "◉" : "",
-    unit.rooted ? "⌁" : "",
-    unit.marked ? "◎" : "",
-    unit.exposed ? "!" : "",
-    unit.charge ? `⚡ 帯電${unit.charge}` : ""
-  ].filter(Boolean).join(" ");
+  const ward = statuses.some(([key]) => key === "ward") ? " has-ward" : "";
+  token.className = `unit ${unit.side}${selected}${hit}${preview}${ward}`;
+  token.setAttribute("aria-hidden", "true");
   const hpChanged = actual && actual.hp !== unit.hp;
   const hpText = hpChanged ? `${actual.hp}→${unit.hp}` : `${unit.hp}/${unit.maxHp}`;
   token.innerHTML = `
@@ -1890,9 +2019,34 @@ function renderUnit(unit, projected = false, actual = unit) {
     <div class="unit-name">${unit.name}</div>
     <div class="hp-track"><div class="hp-fill" style="width:${(unit.hp / unit.maxHp) * 100}%"></div></div>
     <div class="unit-hp-number${hpChanged ? " changed" : ""}"><span>HP</span> ${hpText}</div>
-    <div class="unit-badges">${badges}</div>
   `;
-  if (unit.charge) token.title = "このターンに実際に回復したHP。連鎖火花の隣接ダメージに加算。ターン終了で消える。";
+  if (statuses.length) {
+    const surface = document.createElement("div");
+    surface.className = "unit-statuses";
+    surface.dataset.unitId = unit.id;
+    statuses.forEach(([key, meta]) => {
+      const chip = document.createElement("span");
+      chip.className = `status-chip ${key} shape-${meta.shape} tone-${meta.tone}${statusChanged(key, unit, actual) ? " changed" : ""}`;
+      chip.dataset.status = key;
+      if (key === "guard" || key === "charge") {
+        const symbol = key === "guard" ? "盾" : "⚡";
+        chip.innerHTML = `<span class="status-symbol">${symbol}</span><b>${unit[key]}</b>`;
+      } else {
+        chip.textContent = meta.short(unit);
+      }
+      chip.addEventListener("mouseenter", () => showStatusPopover(unit, key));
+      chip.addEventListener("mouseleave", () => restorePinnedStatusPopover());
+      surface.appendChild(chip);
+    });
+    surface.addEventListener("click", event => {
+      event.preventDefault();
+      event.stopPropagation();
+      showStatusPopover(unit, null, true);
+    });
+    token.addEventListener("mouseenter", () => showStatusPopover(unit));
+    token.addEventListener("mouseleave", () => restorePinnedStatusPopover());
+    token.appendChild(surface);
+  }
   return token;
 }
 
@@ -2264,8 +2418,8 @@ function showHelp() {
     <div class="brief-step"><b>1</b><span>カードをクリックし、光っている対象マスを選びます。</span></div>
     <div class="brief-step"><b>2</b><span>FAST → NORMAL → SLOWの順に解決。同速度では味方が先です。</span></div>
     <div class="brief-step"><b>3</b><span>カードを移動命令へ変える場合は、味方と移動先を順に選びます。</span></div>
-    <p>◆は装甲、◉は結界、⌁は移動不能、◎は狩人の印です。</p>
-    <p>⚡ 帯電N：このターンに実際に回復したHP。連鎖火花の隣接ダメージに加算され、ターン終了で消えます。</p>
+    <p>駒の下部には、上段へ装甲・結界・移動不能、下段へ標的・露出・帯電を固定位置で表示します。</p>
+    <p>駒にポインターを重ねるか、キーボードでマスを選ぶと、盤面の下に有効な状態の詳しい説明が出ます。</p>
   `, "戦場へ戻る", "close");
 }
 
@@ -2286,6 +2440,16 @@ el.modalButton.addEventListener("click", () => {
   if (action === "restart") resetGame();
   el.modal.hidden = true;
   el.modal.dataset.action = "close";
+});
+
+document.addEventListener("click", event => {
+  const target = event.target;
+  if (target?.closest?.(".unit-statuses") || target?.closest?.("#board-status-popover")) return;
+  if (pinnedStatusPopover) closeStatusPopover(true);
+});
+
+document.addEventListener("keydown", event => {
+  if (event.key === "Escape" && pinnedStatusPopover) closeStatusPopover(true);
 });
 
 resetGame();

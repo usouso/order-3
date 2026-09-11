@@ -122,9 +122,15 @@ Counterplay: Reposition, Phase Step, Null Sigil, Quickshot or Pommel Break to ca
 
 ## Charge and Arc Spark
 
-Charge (`⚡ 帯電N`) is visible same-turn healing history, not a general buff or debuff. Only actual enemy HP restored by Drain creates it in this slice; a full-health target gains none, and the value never exceeds 2. End-of-turn cleanup resets it to zero.
+Charge is visible same-turn healing history, not a general buff or debuff. Its board chip is a fixed-position lightning shape containing the complete current value. Only actual enemy HP restored by Drain creates it in this slice; a full-health target gains none, and the value never exceeds 2. End-of-turn cleanup resets it to zero.
 
 Arc Spark keeps its Slow speed, range 3, and 3 primary damage. Before dealing the primary hit, it records every living enemy orthogonally adjacent to the selected target. Each recorded neighbor takes `2 + Charge` damage, to a maximum of 4, even if the primary target is defeated first. Diagonal enemies never chain. Hunter's Mark adds +3 only to the primary hit and is ignored on chained neighbors. If at least one neighbor was recorded, the selected target's Charge is consumed; with no neighbor it remains until turn cleanup and the result explicitly reports `連鎖先なし（帯電ボーナスなし）`.
+
+## Battlefield status language
+
+The six existing unit-state fields are rendered from display-only metadata in a fixed `3 × 2` grid: Guard, Ward, Rooted / Marked, Exposed, Charge. Empty fields do not create chips and do not cause the remaining states to shift slots. Guard uses a shield with its complete value; Ward uses a double ring and an inner double outline around the unit; Rooted uses linked squares; Marked uses a crosshair; Exposed uses a warning triangle; Charge uses a lightning shape with its complete value. Shape, short Japanese text, fixed position, and a state-specific color all remain consistent across allied and enemy units.
+
+The selected forecast snapshot is the sole source for presence and values; live state is used only to decorate changed forecast values. Every occupied living-unit cell exposes coordinates, side, name, HP, active states, and forecast status in a fixed accessible order, with full descriptions generated from the same metadata. Visual unit contents are hidden from accessibility APIs to avoid duplicate reading. Hovering a unit, focusing its cell, or tapping its status surface opens the single in-flow explanation below the battlefield. A status-surface tap stops before the cell action and pins the explanation; outside tap or Escape closes it. HP0 units create no unit status UI or description.
 
 ## Initial encounter
 

@@ -2258,3 +2258,341 @@ COUNTER  柄打ちで詠唱解除可能
 **次の一仮説は「既存の混在ACTION ORDERを戦場の右へ隣接させ、`左から順に実行　01 → 02 → 03 → …`を主ルールとして大きく掲示し、赤い敵イベントへ既存intentの対象・速度・description節を統合する」とする。旧敵予告は閉じた補助詳細へ縮小し、通常画面の重複をなくす。**
 
 成功は単なる文字拡大ではない。1280×720で戦場・全6イベント・手札上端を同時に見られ、700×900では盤面→横一列の実行順→手札を一方向にたどれ、どの敵に対してどの味方命令をどの速度へ差し込むかを右・中央・下へ往復せず判断できることで判定する。
+
+---
+
+# ORDER//3 OODA — DECIDE 11候補 — 盤面ステータス言語
+
+更新: 2026-09-12 JST
+
+## 入力と今回の境界
+
+ACT 10 corrective QAはPASSし、1280×720と700×900の中央実行読路、320pxの横overflow、6イベント、敵説明、手札上端は成立した。次の未解決事項は、結界を含む付与効果が戦場駒の右上に`◆4 ◉ ⌁ ◎ ! ⚡ 帯電2`のような9px文字列で出るだけで、記号の意味、効果、寿命、消費条件を盤面上から判断できないことである。長い説明を持つのは帯電の`title`だけで、cellの`aria-label`も座標しか持たない。
+
+今周回で検証する仮説は一つだけとする。
+
+> **盤面駒の付与効果を、本文を読まず形・色・短い日本語ラベルで見分けられ、hover／focus／touchから正確な効果説明へ到達できれば、選択スナップショットごとの防御、移動阻害、次の被害、連鎖火花の増幅を盤面で比較でき、予測の三手を組む判断が速くなる。**
+
+対象は現行stateにある`guard`、`ward`、`rooted`、`marked`、`exposed`、`charge`の6種だけである。効果、数値、寿命、付与、消費、予測、カード、敵AI、速度、対象、ACT 10配置、敵説明、経路を変えない。カード分類アイコンは別ACTのまま保留する。
+
+## 現行表示とセル寸法の制約
+
+- デスクトップのセルは`clamp(58px, 4.7vw, 68px)`、720px以下は最大54pxである。現在の`.unit`内にはアイコン、名前、HPバー、HP数値、右上バッジ列が同居する。
+- 状態を横一列へ増やすだけでは、`盾12 / 結 / 鎖 / 標 / 露 / ⚡2`が58pxにも54pxにも収まらない。折返し位置が毎回変わる列は、どの状態かを位置で覚えられずHPも覆う。
+- 現在の`renderUnit(unit, projected, actual)`には、選択スナップショットの`unit`とライブ値の`actual`がすでに渡る。表示だけで現在値／予測値の差を作れ、新しい予測経路は不要である。
+- HP0はACT 09により`previewDisplayUnitAt()`から返らない。ステータス表示もこの生存駒描画の子に限定すれば、死亡駒を盤面へ戻さない。
+- cell自体がbuttonであり、状態buttonを内側へ入れるとbuttonの入れ子になる。キーボード説明はcell focus、視覚説明は非buttonの状態チップと盤面外の説明欄で行う必要がある。
+
+## 最大3案の比較
+
+| 案 | 58〜68px / 54px | 複数状態 | 陣営色・色覚 | HP・視覚負荷 | 予測値 | aria / keyboard / touch | 実装・テスト範囲 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| **A. 固定6スロット＋結界輪郭＋オンデマンド説明** | 状態面を3列×2段の固定位置にし、狭幅でも1文字・形・数値を保持 | 6種すべてを省略せず同時表示。空スロットは詰めず位置を固定 | 敵赤／味方cyanは本体へ残し、状態は固有形・固有色・`盾/結/鎖/標/露/⚡`を併用 | HPを状態面の上へ分離。状態がない駒は空で、ある時だけ密度が上がる | 選択スナップショット値を表示し、数値差だけchanged輪郭 | cell labelと静的説明を付加。hover/focus/touchは盤面外説明欄を共有 | **中**。`statusMeta`、`renderUnit/renderBoard`、CSS、表示イベント。ルール無変更 |
+| B. 可変アイコン列＋戦場下の常設凡例 | アイコン自体は小さくできるが、54pxでは6件が折返す | 件数で並びと高さが変わり、HPや名前へ侵入しやすい | 形は使えるが、意味を戦場下の凡例へ視線移動して照合 | 常設凡例がACT 10で確保した700×900の手札上端を再び下へ押す | 予測値は可能 | 凡例は一度読めるが、個々の駒との対応が遠い。touchは凡例往復 | 低〜中 |
+| C. 代表状態1件＋`+N`＋詳細 | 最も省スペース | 優先度外の状態が盤面から消え、装甲と露出、標的と帯電などの同時判断を失う | 代表形は明瞭 | 負荷は最小 | 代表以外の付与／消費を追えない | 詳細を開けば読めるが、「本文を読まず全状態を判断」を満たさない | 低 |
+
+## 推奨: A「固定6スロット＋結界輪郭＋オンデマンド説明」
+
+Aだけが全情報を失わず、狭幅で位置が揺れず、常設凡例の高さも増やさない。6状態を同じ丸バッジの色違いにはせず、形、短い文字、色、固定位置の四つを重ねる。
+
+固定位置は上段を防御／拘束、下段を被害条件／増幅として次の順にする。
+
+```text
+┌───────────────┐
+│ アイコン  名前/HP │  ← 駒本体色は味方cyan・敵red
+│ ─ HP BAR ──── │
+│ [盾N] [ 結 ] [ 鎖 ] │
+│ [ 標 ] [ 露 ] [⚡N] │
+└───────────────┘
+```
+
+実際のCSSは3列×2段であり、空の状態はDOMへ出さないが、各keyへ固定`grid-area`を与えるため残りのチップを前詰めしない。最大6種でも`+N`へ畳まず、1種でも位置は同じにする。狭幅の装甲は盾形そのものへ数値を入れて`盾`文字を視覚的に省略してよいが、aria名は必ず`装甲N`とする。
+
+## 中央`statusMeta`の表示契約
+
+表示名、短縮表示、形、色、順序、説明、aria文言を`statusMeta`一か所に集める。ゲームの効果解決はこの定義を参照せず、既存stateを唯一のルール状態として維持する。
+
+```js
+const statusMeta = {
+  guard: {
+    order: 1, label: "装甲", short: unit => `盾${unit.guard}`,
+    active: unit => unit.guard > 0,
+    shape: "shield", tone: "amber",
+    detail: unit => unit.persistentGuard
+      ? `装甲${unit.guard}。受けるダメージを先にこの値まで吸収し、吸収した分だけ減少。反撃姿勢の残りは次に別の行動を始める時に終了。`
+      : `装甲${unit.guard}。受けるダメージを先にこの値まで吸収し、吸収した分だけ減少。残りはターン終了で消える。`
+  },
+  ward: {
+    order: 2, label: "結界", short: () => "結",
+    active: unit => unit.ward === true,
+    shape: "double-ring", tone: "violet",
+    detail: () => "次の状態異常か地形ダメージを1回無効。無効にした時に消費し、未使用なら持ち越す。"
+  },
+  rooted: {
+    order: 3, label: "移動不能", short: () => "鎖",
+    active: unit => unit.rooted === true,
+    shape: "linked-square", tone: "blue",
+    detail: () => "このターンは移動できない。行動そのものは取り消さず、ターン終了で解除。"
+  },
+  marked: {
+    order: 4, label: "標的（狩人の印）", short: () => "標",
+    active: unit => unit.marked === true,
+    shape: "crosshair-circle", tone: "yellow",
+    detail: () => "次に味方側から攻撃を受ける時、そのダメージ+3。発動時に消費し、未発動なら持ち越す。"
+  },
+  exposed: {
+    order: 5, label: "露出", short: () => "露",
+    active: unit => unit.exposed === true,
+    shape: "warning-triangle", tone: "rose",
+    detail: () => "次に敵側からダメージを受ける時、そのダメージ+1。適用時に消費し、未発動なら持ち越す。"
+  },
+  charge: {
+    order: 6, label: "帯電", short: unit => `⚡${unit.charge}`,
+    active: unit => unit.charge > 0,
+    shape: "lightning", tone: "orange",
+    detail: unit => `帯電${unit.charge}。このターンに実際に回復したHP（最大2）。連鎖火花の上下左右に隣接する敵へのダメージへ${unit.charge}加算。連鎖先がある時に消費し、ターン終了でも消える。`
+  }
+};
+```
+
+この文章は現行コードの契約へ合わせる。`ward/marked/exposed`はターン終了で消さず、発動時だけ消費する。`rooted/charge`はターン終了で消える。通常`guard`はターン終了、`persistentGuard`だけは既存の次行動開始処理まで残る。`charge`は0〜2で実回復量だけ増え、連鎖先がある連鎖火花でだけ消費する。表示文言を変更する場合も、同じ`statusMeta.detail`から視覚説明とaria説明を生成し、別コピーを持たない。
+
+## 形・色・文字の言語
+
+| 状態 | 常時表示 | 形 | 色の候補 | 他状態との非色差 |
+| --- | --- | --- | --- | --- |
+| 装甲 | 盾形の中に現在値。広幅だけ`盾N` | 下が尖った五角形 | amber `#f2c14e` | 唯一の数値入り盾。ダメージ吸収で値が減る |
+| 結界 | `結`チップ＋駒内側の二重輪郭 | 二重円／二重角丸 | violet `#d8b4ff` | 唯一、本体全周を二重に囲む。1回無効 |
+| 移動不能 | `鎖` | 角を欠いた連結四角 | blue `#7dd3fc` | 連結線と漢字。移動だけ不可 |
+| 標的 | `標` | 照準円＋中心点 | yellow `#fde047` | 円形照準と漢字。次の味方攻撃+3 |
+| 露出 | `露` | 上向き警告三角 | rose `#fb7185` | 三角と漢字。次の敵側被害+1 |
+| 帯電 | 稲妻形の中に現在値。広幅は`⚡N` | 稲妻 | orange `#fb923c` | 唯一の稲妻と数値。連鎖増幅 |
+
+赤／緑の対だけで区別しない。敵／味方の赤／cyanは本体の枠とアイコンに限定し、状態色はどちらの陣営でも同じにする。モノクロ、色覚シミュレーション、Windows forced-colorsでも、盾、二重輪郭、鎖、照準円、三角、稲妻、1文字ラベルが残るようにする。状態へ新しい点滅や常時アニメーションは付けない。
+
+## DOM契約
+
+`renderUnit()`の文字列`unit-badges`を、`statusMeta`から作る固定面へ置換する。チップはspanでありbuttonにしない。cell buttonの入れ子を作らない。
+
+```html
+<button class="cell" role="gridcell"
+        aria-label="5列 2行、城壁兵、HP 8/12、装甲4、結界、移動不能、標的、帯電2"
+        aria-describedby="status-desc-bastion">
+  <div class="unit enemy has-ward projected-unit" aria-hidden="true">
+    <div class="unit-icon">B</div>
+    <div class="unit-name">城壁兵</div>
+    <div class="hp-track">…</div>
+    <div class="unit-hp-number">HP 8/12</div>
+    <div class="unit-statuses" data-unit-id="bastion">
+      <span class="status-chip guard" data-status="guard"><b>4</b></span>
+      <span class="status-chip ward" data-status="ward">結</span>
+      <span class="status-chip rooted" data-status="rooted">鎖</span>
+      <span class="status-chip marked" data-status="marked">標</span>
+      <span class="status-chip charge" data-status="charge"><b>2</b></span>
+    </div>
+  </div>
+  <span id="status-desc-bastion" class="sr-only">
+    装甲4。受けるダメージを先に4まで吸収し、吸収した分だけ減少。…
+    結界。次の状態異常か地形ダメージを1回無効。…
+    移動不能。このターンは移動できない。…
+  </span>
+</button>
+```
+
+実際には`ward`がfalseなら`has-ward`と`結`チップを出さない。例は結界を含む複数状態時の構造説明であり、stateにない状態をDOMへ追加しない。`aria-hidden="true"`を駒の視覚DOMへ付け、buttonの明示的labelとdescriptionとの二重読上げを避ける。
+
+戦場の直後、既存`.board-footer`より前に一つだけ視覚説明領域を置く。
+
+```html
+<div id="board-status-popover" class="board-status-popover"
+     aria-hidden="true" hidden></div>
+```
+
+- pointerで駒または個別チップへhoverすると、その駒の有効状態を`statusMeta.order`順に表示する。個別チップhover時は該当説明を先頭へ置く。
+- cellへTab focusすると全有効状態を表示する。視覚領域は盤面の下、文書フロー内で展開し、セルや隣セルへ重ねない。
+- touchでは`.unit-statuses`全体へのtapで説明を固定表示し、イベントを`stopPropagation()`してその一回を移動／対象確定に使わない。説明外tapまたはEscapeで閉じる。駒本体の通常tapは従来どおりゲーム入力に使う。
+- 小チップを一つずつ正確にtapしなくても、状態面全体へのtapで全説明へ到達できる。表示後は盤面外説明内の状態名を十分なtouch領域で読める。
+- AT向けの長い説明は各cellの静的`aria-describedby`に同じ`statusMeta.detail`から生成する。視覚説明領域自体をlive regionにせず、盤面を移動するたび不要な割込みを起こさない。
+- 状態がない駒ではdescription参照と説明領域を出さない。hover/focusしても「状態なし」のポップオーバーを開かない。
+
+## CSSと重なり優先
+
+```css
+.unit {
+  --status-row-height: 10px;
+  overflow: hidden;
+}
+.hp-track {
+  position: absolute;
+  left: 4px; right: 4px; bottom: 24px;
+  height: 3px;
+}
+.unit-hp-number { right: 3px; bottom: 27px; }
+.unit-statuses {
+  position: absolute;
+  z-index: 4;
+  left: 2px; right: 2px; bottom: 2px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-rows: repeat(2, var(--status-row-height));
+  gap: 1px;
+  pointer-events: auto;
+}
+.status-chip {
+  display: grid;
+  place-items: center;
+  min-width: 0;
+  color: #071018;
+  font-size: 8px;
+  font-weight: 900;
+  line-height: 1;
+}
+.status-chip.guard   { grid-area: 1 / 1; clip-path: polygon(8% 0,92% 0,92% 64%,50% 100%,8% 64%); }
+.status-chip.ward   { grid-area: 1 / 2; border: 2px double currentColor; border-radius: 50%; }
+.status-chip.rooted { grid-area: 1 / 3; }
+.status-chip.marked { grid-area: 2 / 1; border-radius: 50%; }
+.status-chip.exposed{ grid-area: 2 / 2; clip-path: polygon(50% 0,100% 100%,0 100%); }
+.status-chip.charge { grid-area: 2 / 3; clip-path: polygon(38% 0,85% 0,61% 40%,92% 40%,30% 100%,43% 57%,12% 57%); }
+.unit.has-ward::after {
+  content: "";
+  position: absolute;
+  z-index: 3;
+  inset: 1px;
+  border: 3px double var(--status-ward);
+  border-radius: 5px;
+  pointer-events: none;
+}
+.status-chip.changed { box-shadow: 0 0 0 1px #fff; }
+.board-status-popover[hidden] { display: none; }
+```
+
+上は構造契約であり、色変数と細部は実ブラウザで調整する。`guard`と`charge`は短縮表示と形の実装を分け、clip-pathで文字まで読めなくなる場合は形を背景疑似要素へ移し、数字を通常レイヤーへ残す。
+
+重なり優先は次で固定する。
+
+1. セル背景、災印、火種の罠。
+2. 敵／味方色を持つ駒本体。
+3. 結界の内側二重輪郭。予測pulseの背景より上、文字より下。
+4. アイコン、名前、HPバー、HP数値。
+5. 固定状態面。
+6. cellの合法枠、選択中の白枠、keyboard focus outline。これらは結界より外側に見え、操作可能性を優先する。
+7. 状態説明は盤面外の文書フロー。盤面、隣セル、ACTION ORDERを覆わない。
+
+`projected-unit`の色変化は本体背景だけへ適用し、状態色をfilterやopacityで弱めない。`.hit`の一時animation後も状態面と結界輪郭を復帰させる。災印／罠はセル層、状態は駒層なので意味を混同しない。
+
+## 予測値と表示寿命
+
+- `renderUnit()`へ渡された選択スナップショットの`unit`だけでactive状態、数値、説明を作る。ライブ`game.units`を状態表示へ混ぜない。
+- `actual`は差分装飾だけに使う。`guard`または`charge`がライブ値と異なり、予測後も1以上なら現在の予測値だけをチップへ表示し、`.changed`を付ける。長い説明とariaでは`現在0 → 予測5`等の差分を追加してよい。
+- boolean状態が付与された直後はチップと輪郭を出し、消費直後は0／falseなので完全に外す。消えた状態の空マーカー、`0`、打消しチップは出さない。消費理由は既存ACTION ORDER結果が担う。
+- 途中予測を前後すると、そのスナップショットの値に従い同じチップが出現、数値変化、消滅する。最終予測と実行中も同じ描画関数を使う。
+- 一手戻しで付与命令を外せば消え、消費させる命令を外して状態が残るなら再表示する。表示用キャッシュに状態を残さない。
+- HP0はACT 09どおり`renderUnit()`へ到達せず、状態チップ、結界輪郭、ariaのユニット状態、ポップオーバー対象をすべて作らない。
+
+## aria-labelと説明契約
+
+- 生存ユニットがいるcell buttonの`aria-label`は、`座標、ユニット名、陣営、HP現在値/最大値、有効な状態名と値、予測中なら予測`の順にする。
+- 例: `5列 2行、敵 城壁兵、HP 8/12、装甲4、移動不能、標的、帯電2、予測表示`。状態0／falseは含めない。
+- 予測HPがライブと異なる場合は`HP 12から8`、装甲／帯電が異なる場合は`装甲 0から4`のように差分を説明へ追加し、視覚上の予測値と食い違わせない。
+- `aria-describedby`の静的テキストは、同じ有効状態を`statusMeta.order`順に、状態名＋完全な説明で列挙する。視覚チップの記号名を推測させない。
+- HP0セルは座標、地形、罠、合法状態だけを読み、死亡ユニットと旧状態を含めない。
+- cell focusは従来の対象選択buttonを兼ねる。Enter／Spaceのゲーム入力を奪わず、説明はfocus時に視覚表示される。Escapeは説明固定だけを閉じ、カード選択解除へ伝播させるかは既存Escape契約を優先する。
+- tooltipを`title`だけに依存しない。`title`はkeyboard・touch・ATで一貫せず、現在の帯電だけの特例も`statusMeta`へ統合する。
+
+## レスポンシブ契約
+
+### 58〜68pxセル
+
+- 上部に22〜28pxのアイコン／名前、状態面の直上にHPバーと数値、下部に約21pxの固定状態面を確保する。
+- 58pxでも6スロットが駒のborder box内に収まり、隣セルへはみ出さない。名前を短縮する場合もアイコン、HP、全状態を優先し、名前はcell labelとhover/focus説明へ残す。
+- 状態が1件でも6件でも駒外形とセル高を変えず、戦場全体のACT 10 bounding rectを動かさない。
+
+### 54px以下
+
+- 現行どおり盤面名を非表示にし、アイコンを上部へ残す。状態面は3列×2段を維持し、装甲／帯電は形の中の数値、他は1文字を8px以上で表示する。
+- `盾12`が入らない時は盾形＋`12`へする。値を一桁へ切る、`9+`に丸める、状態を`+N`へ畳むことは禁止する。
+- チップ間1px、外周2pxを確保し、文字のbounding boxがclip-pathで切れず、隣接チップが重ならないことを実測する。
+- touchは小チップ単体でなく`.unit-statuses`面全体を説明起点にする。説明は盤面下へ開き、隣セルを覆わない。開いた時に手札が下へ押されることは許容するが、閉じた初期状態ではACT 10の700×900`#hand top < 900`を維持する。
+
+## 受け入れ条件
+
+### 六つの状態
+
+- `guard > 0`だけ盾形と完全な現在値を表示し、ダメージ吸収後に値が減り、0で消える。通常／persistentの説明をstateどおり出し分ける。
+- `ward === true`だけ`結`と駒内側の固有二重輪郭を表示し、説明が`次の状態異常か地形ダメージを1回無効`、無効時消費、未使用時持越しを伝える。
+- `rooted === true`だけ鎖形`鎖`を表示し、このターンの移動不能とターン終了解除を伝える。
+- `marked === true`だけ照準円`標`を表示し、次の味方側攻撃+3、発動時消費、持越しを伝える。
+- `exposed === true`だけ三角`露`を表示し、次の敵側被害+1、適用時消費、持越しを伝える。
+- `charge > 0`だけ稲妻と完全な1／2を表示し、実回復量、連鎖火花の隣接加算、連鎖時消費、ターン終了消滅を伝える。
+- 0／falseの状態はチップ、輪郭、cell label、description、説明欄のどこにも出さない。
+
+### 同時表示と非干渉
+
+- 6状態を人工的に同時activeにした生存駒でも6スロットを省略せず、HPバー、HP数値、アイコン、セル境界、隣セルを覆わない。
+- 実到達する敵の`装甲＋移動不能＋標的＋帯電`、味方の`装甲＋結界＋露出`をそれぞれ一目で区別できる。
+- 敵／味方本体色は維持し、状態色を変えない。同じ状態は陣営をまたいで同じ形・色・短縮名になる。
+- grayscale／色覚シミュレーションで色を失っても、形と`盾/結/鎖/標/露/稲妻`、数値で全状態を区別できる。
+- 結界輪郭はprojected、selected、hit、cell focus、合法対象枠と同時に出ても、どれが状態でどれが操作／予測かを判別できる。
+- 災印、火種の罠、HP、敵意図マスを状態チップで隠さず、カード分類記号に見える新しいカードUIを作らない。
+
+### 予測・可逆性
+
+- 無効印直前は結界なし、付与直後は結界あり、後続の露出または地形ダメージを無効にした直後は結界なし・該当状態なしとなる。
+- 縫い留め直後に移動不能が出て、同ターン中の敵移動予測で残り、ターン終了後に消える。
+- 狩人の印、露出、帯電、装甲も付与／数値変化／消費の各スナップショットへ一致し、タイムラインを戻すと可逆に復帰する。
+- 一手戻し、最終予測、作戦実行、次ターンで同じstateなら同じ表示になる。表示操作でstate、forecast、queueを変えない。
+- HP0は現在、予測、実行、次ターン、終局のすべてで駒も状態も非描画のままである。
+
+### 説明アクセス
+
+- pointer hoverで駒の全有効状態、個別チップhoverでその状態の説明を盤面下へ表示できる。
+- Tabで各occupied cellへfocusすると、視覚説明が開き、screen readerは名前、HP、短い状態一覧、完全な説明を同順に読める。
+- touchで状態面をtapするとゲーム対象を確定せず説明を固定でき、外tap／Escapeで閉じられる。駒本体tapの既存ゲーム操作は維持する。
+- 視覚説明は戦場セルや隣セルを0枚覆う。狭幅でもviewport外へ横にはみ出さず、長文を省略、clamp、tooltip内横スクロールしない。
+- 説明を閉じた通常状態では追加高が0で、ACT 10の1280×720、700×900、320pxレイアウト条件を維持する。
+
+## 自動テスト候補
+
+1. `statusMeta`が6keyを一度ずつ持ち、order 1〜6、固有label、固有shape、空でないdetailを持つことを確認する。
+2. 0／falseだけの生存駒では`.status-chip`、`has-ward`、status description参照が0件になる。
+3. 各状態を単独activeにし、short表示、class、grid-area、aria名、完全説明が該当keyと一致する。別状態の文言を混ぜない。
+4. `guard=12`、`charge=2`を表示して数値を丸めず、guard吸収後4→1→0、charge 1→2→0へDOMが同期する。
+5. 6状態同時のrender-only fixtureでチップ6件、固有class6件、重複なし、`+N`なしを検査する。
+6. 選択スナップショットとライブ値を変え、active判定、短縮値、aria、説明がスナップショット側、changed判定だけがactualとの差になることを確認する。
+7. 無効印→結界、後続露出／地形ダメージ無効→結界消費、一手戻し→結界復帰をforecast indexごとに検査する。
+8. 縫い留め、狩人の印、盾の圧力、生命吸収、連鎖火花、装甲付与／被害を使い、6種の付与、持続、数値変化、消費、ターン終了が既存stateどおり表示される。
+9. HP0 fixtureでstatus値を残しても、戦場にunit、status chip、ward輪郭、unit aria descriptionを出さない。SQUAD STATUS等のACT 09契約は維持する。
+10. occupied cellのaria-labelが座標、陣営、名前、HP、有効状態だけをorder順に持ち、`aria-describedby`が同じdetailを参照する。
+11. status面tapのeventだけがcell clickへ伝播せず、駒本体click、カード対象確定、移動、罠配置は従来どおり動く。hover/focus表示はcombat stateを変更しない。
+12. 68px、58px、54px、320px viewportで全6チップのrectがunit border内、HP rectと非交差、各文字の`scrollWidth <= clientWidth`、文書横overflowなしになる。
+13. status説明hidden時に追加高0、表示時に戦場セルとのrect交差0、幅がboard panel内、テキストclamp／横scrollなしになる。
+14. `node --check outputs/order-3/game.js`、`node --check work/smoke-test.js`、`node work/smoke-test.js`を成功させ、ACT 01〜10の全回帰を維持する。
+
+## 実ブラウザ確認候補
+
+- 1280×720で状態なしの初期盤面を開き、ACT 10の戦場、6イベント、手札上端とconsole error／warning 0件を確認する。
+- 通常操作で無効印を味方へ付与し、結界の二重輪郭と`結`、cell aria、盤面下説明を確認する。次の露出または災印ダメージを無効化した直後にすべて消え、一手戻しで戻ることを確認する。
+- 縫い留めと狩人の印を敵へ使い、`鎖`と照準円`標`を同時表示する。敵移動が止まっても行動自体は残り、ターン終了／次の味方攻撃で別々に消えることを確認する。
+- 盾を固める／割って入る／庇護／反撃姿勢と被害を使い、盾内の装甲値が予測した吸収量どおり減り、通常とpersistentの説明が正しいことを確認する。
+- 盾の圧力で露出を付け、次の敵側被害で`露`が消えること、先に結界があれば露出が付かず結界だけ消えることを確認する。
+- 生命吸収で実回復した敵へ`⚡1/2`が出て、連鎖先ありの連鎖火花で隣接加算後に消え、連鎖先なしでは残り、ターン終了で消えることを確認する。
+- 実到達する複数状態とrender-onlyの6状態fixtureを58、68、54pxで撮影し、HP、文字、形、数値、隣セル、災印、罠の重なりを目視する。
+- 赤緑色覚、全色覚、grayscale、Windows forced-colors相当で、色を除いても六つを形と短縮名から言い分けられることを確認する。
+- mouse hover、Tab/Shift+Tab、Enter/Space、touch emulationで説明へ到達し、status面tapが命令確定せず、本体tapが従来どおり動くことを確認する。
+- 700×900、320×900、200%ズーム相当で、閉じた初期表示のACT 10寸法、説明表示時の盤面非被覆、長文折返し、ページ横overflowなしを確認する。
+- 最終予測、一手戻し、実行中current、次ターン、勝利／敗北背景で表示値とstateが一致し、HP0状態チップが復活しないことを軽回帰する。
+
+## 支配的な副作用を避ける境界
+
+- `statusMeta`は表示専用とし、ダメージ計算、状態付与、消費、ターン終了、予測器、直接実行系から参照しない。
+- 状態説明を正しく見せるために効果、数値、寿命を変更しない。表示と実装の不一致を見つけた場合は今周回で規則を直さず、観察事項として返す。
+- ACT 10のHTML配置、敵description要約、ACTION ORDERの高さ／順序／aria、盤面セル寸法レンジを変更しない。
+- 状態チップをカードへ付けず、罠、攻撃、印、盾のカード分類を先取りしない。
+- 敵移動経路、罠の経路判定、FE式隣接、盤面サイズ、3命令、速度、敵対象を変更しない。
+- 常設凡例、sticky/fixed tooltip、隣セルを覆う巨大popover、状態代表1件への省略を追加しない。
+
+## DECIDE 11候補
+
+**次の一仮説は「生存駒内に`装甲・結界・移動不能 / 標的・露出・帯電`の固定3列×2段を置き、盾数値、結界二重輪郭＋`結`、鎖、照準、警告三角、稲妻数値を形・色・短い日本語で常時表示する」とする。値と有無は選択スナップショットだけに従い、長い正確な説明は中央`statusMeta`からcell ariaと盤面外のhover／focus／touch説明へ供給する。**
+
+成功はバッジを派手にすることではない。58〜68pxと54pxで複数状態とHPを同時に失わず、結界の1回無効、装甲残量、移動不能、次の+3／+1、帯電1／2を盤面だけで区別し、予測の前後と一手戻しでstateどおり可逆に変わり、説明を開いても盤面や隣セルを覆わないことで判定する。

@@ -58,11 +58,13 @@ class FakeElement {
 
 const elements = new Map();
 const document = {
+  listeners: {},
   querySelector(selector) {
     if (!elements.has(selector)) elements.set(selector, new FakeElement(selector));
     return elements.get(selector);
   },
-  createElement() { return new FakeElement(); }
+  createElement() { return new FakeElement(); },
+  addEventListener(type, handler) { this.listeners[type] = handler; }
 };
 
 function getComputedStyle(element) {
@@ -871,8 +873,10 @@ const tests = `
     assert(el.modeHelp.textContent.includes("本体6") && el.modeHelp.textContent.includes("帯電+2"),
       "Arc Spark selection UI should display the dynamic breakdown");
     const chargedToken = renderUnit(simGetUnit(context.state, "pursuer"));
-    assert(chargedToken.innerHTML.includes("⚡ 帯電2") && chargedToken.title.includes("ターン終了"),
-      "board token should show charge value and its short lifetime explanation");
+    const chargedChip = chargedToken.children[0].children.find(chip => chip.dataset.status === "charge");
+    assert(chargedChip.dataset.status === "charge" && chargedChip.innerHTML.includes("<b>2</b>")
+      && statusMeta.charge.detail(simGetUnit(context.state, "pursuer")).includes("ターン終了"),
+      "board token should show the complete charge value and central metadata should explain its lifetime");
   }
 
   {
@@ -1730,9 +1734,10 @@ const tests = `
     game.previewIndex = 0;
     renderBoard();
     const beforeLethal = boardCell(2, 4);
-    assert(beforeLethal.children.length === 1
-      && beforeLethal.children[0].innerHTML.includes("3→2")
-      && !beforeLethal.children[0].className.includes("predicted-ko"),
+    const beforeLethalToken = beforeLethal.children.find(child => child.className.includes("unit "));
+    assert(beforeLethalToken
+      && beforeLethalToken.innerHTML.includes("3→2")
+      && !beforeLethalToken.className.includes("predicted-ko"),
       "the pre-lethal snapshot should display the still-living projected unit without a KO class");
     game.previewIndex = 1;
     renderBoard();
@@ -1744,7 +1749,7 @@ const tests = `
       "the final forecast should contain no full-body ghost or KO marker");
     game.previewIndex = 0;
     renderBoard();
-    assert(boardCell(2, 4).children.length === 1,
+    assert(boardCell(2, 4).children.some(child => child.className.includes("unit ")),
       "returning to the pre-lethal snapshot should restore the living unit reversibly");
   }
 
@@ -2113,6 +2118,235 @@ const tests = `
       && currentStep.getAttribute("aria-pressed") === "false",
       "the resolving event should expose current and expanded state without planning pressed state");
     resetGame();
+  }
+
+  {
+    const statusKeys = ["guard", "ward", "rooted", "marked", "exposed", "charge"];
+    const expectedLabels = ["装甲", "結界", "移動不能", "標的（狩人の印）", "露出", "帯電"];
+    const expectedShapes = ["shield", "double-ring", "linked-square", "crosshair-circle", "warning-triangle", "lightning"];
+    const expectedTones = ["amber", "violet", "blue", "yellow", "rose", "orange"];
+    assert(Object.keys(statusMeta).join(",") === statusKeys.join(","),
+      "ACT 11 status metadata should cover only the six existing state fields in fixed order");
+    statusKeys.forEach((key, index) => {
+      const meta = statusMeta[key];
+      assert(meta.order === index + 1 && meta.label === expectedLabels[index]
+        && meta.shape === expectedShapes[index] && meta.tone === expectedTones[index]
+        && typeof meta.short === "function" && typeof meta.active === "function"
+        && typeof meta.detail === "function" && meta.detail({ guard: 12, charge: 2 }).length > 20,
+        "each existing state should have one complete display-only metadata definition: " + key);
+    });
+
+    const cellAt = (x, y) => el.board.children[y * SIZE + x];
+    const unitChild = cell => cell.children.find(child => child.className.includes("unit "));
+    const descriptionChild = cell => cell.children.find(child => child.className.includes("status-description"));
+    const renderFingerprint = () => JSON.stringify({
+      units: game.units,
+      queue: game.queue,
+      intents: game.intents,
+      hostileRunes: game.hostileRunes,
+      emberRunes: game.emberRunes,
+      activeForecast: game.activeForecast
+    });
+
+    resetGame();
+    game.intents = [];
+    renderBoard();
+    const plainRookCell = cellAt(getUnit("rook").x, getUnit("rook").y);
+    const plainRook = unitChild(plainRookCell);
+    assert(plainRook && plainRook.children.length === 0
+      && plainRookCell.getAttribute("aria-describedby") === null
+      && !expectedLabels.some(label => plainRookCell.getAttribute("aria-label").includes(label)),
+      "zero and false states should create no chip, ward outline, aria state, or description");
+
+    const bastion = getUnit("bastion");
+    bastion.guard = 12;
+    bastion.ward = true;
+    bastion.rooted = true;
+    bastion.marked = true;
+    bastion.exposed = true;
+    bastion.charge = 2;
+    const beforeStatusRender = renderFingerprint();
+    renderBoard();
+    const fullCell = cellAt(bastion.x, bastion.y);
+    const fullToken = unitChild(fullCell);
+    const fullSurface = fullToken.children[0];
+    const fullDescription = descriptionChild(fullCell);
+    assert(renderFingerprint() === beforeStatusRender,
+      "rendering six statuses should not mutate combat, forecast, queue, intents, or traps");
+    assert(fullToken.className.includes("has-ward") && fullToken.getAttribute("aria-hidden") === "true"
+      && fullSurface.className === "unit-statuses" && fullSurface.children.length === 6,
+      "all six active states should render inside one hidden visual unit surface with the ward outline");
+    assert(fullSurface.children.map(chip => chip.dataset.status).join(",") === statusKeys.join(",")
+      && fullSurface.children.every((chip, index) => chip.className.includes("shape-" + expectedShapes[index])
+        && chip.className.includes("tone-" + expectedTones[index])),
+      "six simultaneous states should keep their fixed metadata order, shape, and color classes");
+    const guardChip = fullSurface.children.find(chip => chip.dataset.status === "guard");
+    const chargeChip = fullSurface.children.find(chip => chip.dataset.status === "charge");
+    assert(guardChip.innerHTML.includes("<b>12</b>") && chargeChip.innerHTML.includes("<b>2</b>")
+      && !fullSurface.children.some(chip => chip.textContent.includes("+")),
+      "guard and charge should show their complete values without 9+ or +N collapsing");
+
+    const aria = fullCell.getAttribute("aria-label");
+    const ariaParts = ["5列 1行", "敵", "城壁兵", "HP 12/12", "装甲12", "結界", "移動不能", "標的（狩人の印）", "露出", "帯電2"];
+    let previousPart = -1;
+    ariaParts.forEach(part => {
+      const position = aria.indexOf(part);
+      assert(position > previousPart, "occupied cell aria fields should remain in fixed order: " + part);
+      previousPart = position;
+    });
+    const expectedDescription = statusKeys.map(key => statusFullDescription(key, bastion)).join(" ");
+    assert(fullCell.getAttribute("aria-describedby") === fullDescription.id
+      && fullDescription.textContent === expectedDescription,
+      "the cell description should list only active states from the same central metadata");
+
+    const actual = { ...bastion, guard: 0, ward: false, rooted: false, marked: false, exposed: false, charge: 0 };
+    const projectedToken = renderUnit({ ...bastion }, true, actual);
+    const projectedSurface = projectedToken.children[0];
+    const projectedAria = unitCellAriaLabel(bastion, actual, true, bastion.x, bastion.y);
+    assert(projectedToken.className.includes("projected-unit") && projectedToken.className.includes("has-ward")
+      && projectedSurface.children.every(chip => chip.className.includes("changed"))
+      && projectedAria.includes("装甲 0から12") && projectedAria.includes("帯電 0から2")
+      && projectedAria.endsWith("予測表示"),
+      "snapshot state should drive status presence and value while live state only marks prediction differences");
+    const clearedToken = renderUnit(actual, true, bastion);
+    assert(!clearedToken.className.includes("has-ward") && clearedToken.children.length === 0
+      && !unitCellAriaLabel(actual, bastion, true, actual.x, actual.y).includes("装甲")
+      && !unitCellAriaLabel(actual, bastion, true, actual.x, actual.y).includes("帯電"),
+      "a consumed or cleared snapshot state should remove its chips, outline, and aria values completely");
+
+    fullCell.listeners.focus();
+    assert(!el.statusPopover.hidden && el.statusPopover.innerHTML.includes("data-status=\\\"guard\\\"")
+      && el.statusPopover.innerHTML.includes("data-status=\\\"charge\\\""),
+      "cell focus should open all active status explanations below the board");
+    fullCell.listeners.blur();
+    assert(el.statusPopover.hidden, "unfixed keyboard status explanation should close when focus leaves the cell");
+
+    fullToken.listeners.mouseenter();
+    const wardChip = fullSurface.children.find(chip => chip.dataset.status === "ward");
+    wardChip.listeners.mouseenter();
+    assert(el.statusPopover.innerHTML.indexOf("data-status=\\\"ward\\\"")
+      < el.statusPopover.innerHTML.indexOf("data-status=\\\"guard\\\""),
+      "hovering one chip should prioritize its explanation while retaining all active states");
+    wardChip.listeners.mouseleave();
+    fullToken.listeners.mouseleave();
+    assert(el.statusPopover.hidden, "pointer explanations should close after leaving an unfixed unit");
+
+    let prevented = 0;
+    let stopped = 0;
+    const beforeStatusTap = renderFingerprint();
+    fullSurface.listeners.click({
+      preventDefault() { prevented += 1; },
+      stopPropagation() { stopped += 1; }
+    });
+    assert(prevented === 1 && stopped === 1 && pinnedStatusPopover
+      && !el.statusPopover.hidden && el.statusPopover.innerHTML.includes("説明を固定中")
+      && renderFingerprint() === beforeStatusTap,
+      "tapping the status surface should pin explanations and consume that one game-input click without changing state");
+    fullToken.listeners.mouseleave();
+    assert(!el.statusPopover.hidden && el.statusPopover.innerHTML.includes("説明を固定中"),
+      "a pinned touch explanation should survive pointer leave");
+    assert(!fullToken.listeners.click && typeof fullCell.listeners.click === "function",
+      "the normal unit body should keep bubbling to the existing cell action without a nested control");
+    document.listeners.click({ target: { closest() { return null; } } });
+    assert(el.statusPopover.hidden && pinnedStatusPopover === null,
+      "an outside tap should close a pinned explanation");
+    fullSurface.listeners.click({ preventDefault() {}, stopPropagation() {} });
+    document.listeners.keydown({ key: "Escape" });
+    assert(el.statusPopover.hidden && pinnedStatusPopover === null,
+      "Escape should close only the pinned status explanation");
+
+    const deadX = bastion.x;
+    const deadY = bastion.y;
+    bastion.hp = 0;
+    renderBoard();
+    const deadCell = cellAt(deadX, deadY);
+    assert(!unitChild(deadCell) && !descriptionChild(deadCell)
+      && deadCell.getAttribute("aria-describedby") === null
+      && !expectedLabels.some(label => deadCell.getAttribute("aria-label").includes(label)),
+      "HP0 units should produce no unit, status surface, ward outline, or status description");
+  }
+
+  {
+    const cellAt = (x, y) => el.board.children[y * SIZE + x];
+    const statusKeysInCell = cell => {
+      const token = cell.children.find(child => child.className.includes("unit "));
+      return token?.children[0]?.children.map(chip => chip.dataset.status) || [];
+    };
+
+    resetGame();
+    const rook = getUnit("rook");
+    const bastion = getUnit("bastion");
+    rook.x = 1; rook.y = 4;
+    bastion.x = 1; bastion.y = 3;
+    getUnit("iona").x = 2; getUnit("iona").y = 5;
+    game.queue = [queued("null_sigil", "iona", "rook", "fast")];
+    game.intents = [intent(bastion, "shield_drive", "盾の圧力", "normal", rook, "test")];
+    const wardForecast = predictTimeline();
+    assert(simGetUnit(wardForecast.snapshots[0].state, "rook").ward
+      && !simGetUnit(wardForecast.snapshots[1].state, "rook").ward
+      && !simGetUnit(wardForecast.snapshots[1].state, "rook").exposed,
+      "Null Sigil should appear after grant and disappear when it blocks the later Exposed state");
+    game.previewIndex = 0;
+    renderBoard();
+    assert(statusKeysInCell(cellAt(rook.x, rook.y)).includes("ward"),
+      "the intermediate forecast board should show the newly granted ward");
+    game.previewIndex = 1;
+    renderBoard();
+    assert(!statusKeysInCell(cellAt(rook.x, rook.y)).includes("ward")
+      && !statusKeysInCell(cellAt(rook.x, rook.y)).includes("exposed"),
+      "the next forecast board should remove a consumed ward without inventing the blocked status");
+    undoLast();
+    assert(game.queue.length === 0 && !statusKeysInCell(cellAt(rook.x, rook.y)).includes("ward"),
+      "one undo should remove the ward-grant command and its display without a stale cache");
+
+    resetGame();
+    game.intents = [];
+    const enemy = getUnit("pursuer");
+    enemy.x = 2; enemy.y = 4;
+    getUnit("vale").x = 0; getUnit("vale").y = 4;
+    game.queue = [queued("pinning_arrow", "vale", "pursuer", "fast"), queued("hunters_mark", "vale", "pursuer", "slow")];
+    let stateForecast = predictTimeline();
+    assert(simGetUnit(stateForecast.final, "pursuer").rooted && simGetUnit(stateForecast.final, "pursuer").marked,
+      "the existing Pinning Arrow and Hunter's Mark rules should reach the display state unchanged");
+    game.previewIndex = null;
+    renderBoard();
+    assert(statusKeysInCell(cellAt(2, 4)).join(",") === "rooted,marked",
+      "the final forecast should render Rooted and Marked in their fixed non-compacted slots");
+
+    resetGame();
+    game.intents = [];
+    game.queue = [queued("shield_lock", "rook", "rook", "fast")];
+    stateForecast = predictTimeline();
+    assert(simGetUnit(stateForecast.final, "rook").guard === 5,
+      "the existing Shield Lock rule should grant the same guard value before status rendering");
+    renderBoard();
+    assert(statusKeysInCell(cellAt(getUnit("rook").x, getUnit("rook").y)).join(",") === "guard",
+      "the final forecast should render the granted guard without adding another state");
+  }
+
+  {
+    const statusKeys = ["guard", "ward", "rooted", "marked", "exposed", "charge"];
+    assert(htmlSource.split('id="board-status-popover"').length - 1 === 1
+      && htmlSource.indexOf('id="board-status-popover"') > htmlSource.indexOf('id="battlefield"')
+      && htmlSource.includes('id="board-status-popover" class="board-status-popover"')
+      && htmlSource.includes('aria-hidden="true" hidden'),
+      "the visual status explanation should exist exactly once after the battlefield and start hidden");
+    assert(/\\.unit-statuses\\s*\\{[^}]*grid-template-columns:\\s*repeat\\(3,[^}]*grid-template-rows:\\s*repeat\\(2,/s.test(styleSource),
+      "status chips should use the decided fixed three-column by two-row grid");
+    const expectedAreas = {
+      guard: "1 / 1", ward: "1 / 2", rooted: "1 / 3",
+      marked: "2 / 1", exposed: "2 / 2", charge: "2 / 3"
+    };
+    statusKeys.forEach(key => assert(styleSource.includes(".status-chip." + key + " { grid-area: " + expectedAreas[key] + ";"),
+      "CSS should keep the fixed non-compacting grid area for " + key));
+    const popoverCss = styleSource.slice(styleSource.indexOf(".board-status-popover {"), styleSource.indexOf(".board-footer"));
+    assert(popoverCss.includes("width: 100%") && popoverCss.includes("[hidden] { display: none; }")
+      && !/position:\\s*(absolute|fixed)/.test(popoverCss)
+      && /@media \\(max-width:\\s*720px\\)[\\s\\S]*--status-row-height:\\s*9px/.test(styleSource)
+      && /@media \\(max-width:\\s*420px\\)[\\s\\S]*--status-row-height:\\s*8px/.test(styleSource),
+      "the explanation should stay in document flow and responsive status geometry should cover 54px and 320px layouts");
+    assert(/@media \\(forced-colors:\\s*active\\)[\\s\\S]*\\.unit\\.has-ward::after[\\s\\S]*\\.status-chip/.test(styleSource),
+      "forced-colors should retain the ward outline and non-color status shapes");
   }
 
   process.stdout.write("ORDER//3 smoke tests passed\\n");

@@ -493,3 +493,56 @@ ORDER//3 smoke tests passed
 ```
 
 Actual in-app browser QA should remeasure its non-overlay scrollbar and browser zoom. The corrective margins are substantially larger than the original 0.86px headless margin, but automated 640px width remains a zoom equivalent rather than a browser-chrome 200% zoom operation.
+
+---
+
+# ACT 11 — battlefield status language
+
+## Implemented
+
+- Added one display-only `statusMeta` for the six existing unit-state fields only: `guard`, `ward`, `rooted`, `marked`, `exposed`, and `charge`. It centralizes fixed order, full Japanese name, short label, non-color shape, state-specific tone, active predicate, and the existing rule description. Combat resolution, forecast generation, application, consumption, and cleanup do not read this metadata.
+- Replaced the variable text badge string with a fixed three-column by two-row status surface inside each living unit. Guard, Ward, Rooted occupy the first row; Marked, Exposed, Charge occupy the second. Inactive slots emit no DOM but the remaining chips keep their key-specific grid areas rather than shifting forward.
+- Guard uses a shield shape with its complete current value, Ward a double ring plus a unit-wide inner double outline and `結`, Rooted linked squares and `鎖`, Marked a crosshair and `標`, Exposed a warning triangle and `露`, and Charge a lightning shape with its complete current value. Enemy and allied units use identical status shapes, tones, and labels.
+- Active status presence and values come exclusively from the `unit` snapshot passed to `renderUnit()`. The live `actual` unit is used only for `.changed` styling and numeric before-to-after ARIA wording. A state consumed to zero or false emits no chip, outline, label, or description.
+- Rebuilt living occupied-cell accessibility in fixed order: coordinates, side, name, HP, active statuses, and prediction state. Numeric forecast differences announce the live-to-snapshot transition. The visual unit subtree is `aria-hidden`, while a static `aria-describedby` text lists the same active statuses and complete rules from `statusMeta` without duplicate visual reading.
+- Added exactly one initially hidden visual explanation region after the battlefield and before the board footer. Unit hover or cell focus shows all active statuses; individual-chip hover moves that state to the front while retaining the rest. The region stays in normal document flow and never overlays battlefield cells.
+- Tapping/clicking the non-button status surface prevents default and stops propagation, pins all explanations, and does not spend that tap on target confirmation or movement. Tapping outside or pressing Escape closes the pinned explanation. The unit body has no new click handler and continues to bubble into the existing cell action.
+- Kept HP0 handling on the ACT 09 living-unit path: defeated records create no unit visual, chip, Ward outline, accessible unit label, description, or popover target.
+- Replaced the obsolete symbol legend in the help dialog and documented the fixed status language and interactions in README and DESIGN. No status rule, number, duration, card, enemy behavior, action order, FE-style distance, path, or battlefield size changed.
+- Real-browser measurement found an initial HP/status overlap at the 700px and 320px breakpoints. The HP bar, small-screen icon, and row geometry were corrected while retaining 8px status text at 320px. Final measurements leave at least one CSS pixel between HP and the status rows at every tested responsive width.
+
+No discrepancy was found between the six written status descriptions and their existing application, consumption, persistence, or cleanup code.
+
+## Acceptance coverage
+
+- Metadata coverage requires exactly the six existing state fields with fixed orders 1–6, unique shape/tone contracts, active predicates, short labels, and complete descriptions.
+- Zero/false state verifies no chip, Ward class/outline, `aria-describedby`, status label, or explanation. Artificial simultaneous activation verifies all six chips, their complete Guard 12 and Charge 2 values, fixed DOM order and CSS areas, distinct shape/tone classes, Ward outline, exact accessible order, and central full descriptions without `+N` or `9+` collapsing.
+- Snapshot coverage verifies six live-to-predicted changes, `.changed` treatment, `装甲 0から12`, `帯電 0から2`, prediction wording, and complete disappearance when the snapshot clears the fields. Render fingerprints confirm units, queue, intents, runes, and active forecast remain unchanged.
+- A deterministic Null Sigil → Shield Drive forecast verifies Ward appears after grant, disappears after blocking Exposed, does not invent the blocked Exposed chip, and leaves no display cache after one undo. Existing Pinning Arrow plus Hunter's Mark and Shield Lock forecasts verify Rooted/Marked fixed slots and Guard value rendering from real resolver state.
+- Focus, blur, unit hover, individual-chip hover priority, status-surface pinning, pointer leave while pinned, outside tap, and Escape are covered. The status tap invokes both propagation guards without mutating state, while the ordinary unit body retains the existing cell click.
+- HP0 coverage verifies an artificially status-filled defeated unit still produces no unit/status/description DOM or stale accessible state.
+- Static layout coverage requires one hidden in-flow popover, the 3 × 2 grid, six fixed key areas, responsive 9px/8px rows, and forced-colors treatment. All ACT 01–10 regressions remain active.
+
+## Verification
+
+Executed with the bundled Node.js runtime:
+
+```text
+node --check outputs/order-3/game.js
+node --check work/smoke-test.js
+node work/smoke-test.js
+ORDER//3 smoke tests passed
+```
+
+A local headless Chrome pass with all six statuses on one enemy and Guard/Ward/Exposed on one ally also passed:
+
+- 1280×720: document `1280 == 1280`; unit `48.16 × 48.16`; status row `8.5`; HP bottom `180 < 181.16` status top; hidden popover height zero; opened popover top `542.94 >= 534.94` battlefield bottom; hand top `648.94`.
+- 700×900: document `700 == 700`; unit `48 × 48`; status row `9`; HP bottom `164 < 165` status top; popover top `492 >= 484` battlefield bottom; hand top `832.69` remains visible.
+- 320×900: document `320 == 320`; unit `33 × 33`; status row and label size `8`; HP bottom `148 < 149` status top; popover top `398 >= 390` battlefield bottom; hand top `775.08`; hand has no horizontal scrolling.
+- At all widths, six computed CSS grid areas remain fixed, chips remain inside the unit without mutual overlap, complete Guard/Charge values are visible, the popover has no internal horizontal scrolling, focus and chip-hover access work, the status surface does not trigger its cell, Escape closes it, the unit body does trigger its cell, and console warnings/errors are zero.
+
+## Remaining risks
+
+- The six-state artificial fixture is intentionally dense at a 33px unit size. Geometry and information preservation pass, but perceived recognition speed on a physical phone remains a playtest question.
+- The explanation region expands the document only while open. This protects the closed ACT 10 layout, but opening a six-status explanation on a phone pushes the action order and hand downward by design.
+- Browser automation validates ARIA attributes and keyboard focus behavior, but no separate screen-reader voice pass was performed.
