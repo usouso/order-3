@@ -2574,6 +2574,42 @@ const tests = `
       "purpose labels should retain primary/secondary hierarchy, 9px text, readable move origins, and existing 155px/one-column/forced-colors layouts");
   }
 
+  // ACT 13: the opt-in scene is a detached allowlist, never a combat save.
+  {
+    resetGame();
+    const assertScene = (kind, label) => {
+      const before = JSON.stringify(game);
+      const scene = capturePlaytestScene();
+      assert(scene.gameVersion === "ACT 13" && scene.preview.kind === kind, label + ": version and preview kind");
+      assert(JSON.stringify(Object.keys(scene).sort()) === JSON.stringify(["capturedAt", "gameVersion", "orders", "phase", "preview", "selection", "turn"]), label + ": scene allowlist");
+      assert(scene.orders.length <= 3 && !JSON.stringify(scene).includes('"deck"'), label + ": only three order summaries, no deck");
+      if (scene.orders[0]) scene.orders[0].actor = "detached summary";
+      if (scene.selection) scene.selection.cardName = "detached selection";
+      scene.preview.label = "detached preview";
+      assert(JSON.stringify(game) === before, label + ": reading and editing scene never changes game");
+      return capturePlaytestScene();
+    };
+    const initial = assertScene("current", "current board");
+    assert(initial.selection === null && initial.orders.length === 0, "unselected empty queue scene");
+    game.hand = [makeCardInstance("shield_lock")];
+    selectCard(game.hand[0].instanceId);
+    const selected = assertScene("selection-before", "selected technique");
+    assert(selected.selection.cardId === "shield_lock" && selected.selection.cardName === "盾を固める", "selection includes displayed card");
+    setMode("move");
+    assert(assertScene("selection-before", "selected move").selection.mode === "move", "move mode summary");
+    clearSelection();
+    game.queue = [queued("shield_lock", "rook", "rook"), queued("null_sigil", "iona", "rook")];
+    const final = assertScene("final", "two-command forecast");
+    assert(final.orders.length === 2 && final.orders.every(order => order.target === "ルーク"), "order target summaries");
+    game.previewIndex = 0;
+    assert(assertScene("event-after", "event snapshot").preview.eventKey === buildResolutionEvents()[0].key, "event key matches displayed event");
+    game.activeForecast = predictTimeline(); game.phase = "resolving"; game.timelineCursor = 0;
+    assert(assertScene("resolving", "resolving snapshot").preview.eventIndex === 0, "resolving cursor");
+    game.phase = "ended";
+    assertScene("current", "ended board");
+    resetGame();
+  }
+
   process.stdout.write("ORDER//3 smoke tests passed\\n");
 })().catch(error => { console.error(error); process.exitCode = 1; });
 `;

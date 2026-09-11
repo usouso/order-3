@@ -1,4 +1,5 @@
 const SIZE = 6;
+const GAME_VERSION = "ACT 13";
 const SPEED_ORDER = { fast: 0, normal: 1, slow: 2 };
 const SPEED_LABEL = { fast: "FAST", normal: "NORMAL", slow: "SLOW" };
 const WALLS = [{ x: 2, y: 2 }, { x: 3, y: 3 }];
@@ -2514,5 +2515,38 @@ document.addEventListener("click", event => {
 document.addEventListener("keydown", event => {
   if (event.key === "Escape" && pinnedStatusPopover) closeStatusPopover(true);
 });
+
+// Display-only, detached summaries for opt-in playtest notes. Never retain combat references.
+function capturePlaytestScene() {
+  const card = game.hand.find(item => item.instanceId === game.selectedInstanceId);
+  const def = card && cardDefs[card.cardId];
+  const selectionContext = game.phase === "planning" ? selectionTimelineContext() : null;
+  let preview = { kind: "current", eventIndex: null, eventKey: null, label: "現在盤面" };
+  if (game.phase === "resolving") {
+    const index = game.timelineCursor;
+    preview = { kind: "resolving", eventIndex: index >= 0 ? index : null,
+      eventKey: game.activeForecast?.events[index]?.key || null, label: "作戦解決中" };
+  } else if (selectionContext) {
+    preview = { kind: "selection-before", eventIndex: selectionContext.eventIndex,
+      eventKey: selectionContext.events[selectionContext.eventIndex]?.key || null, label: "選択した命令の直前" };
+  } else if (game.phase === "planning" && game.queue.length) {
+    const index = game.previewIndex;
+    preview = Number.isInteger(index)
+      ? { kind: "event-after", eventIndex: index, eventKey: buildResolutionEvents()[index]?.key || null,
+          label: `行動順 ${index + 1} の直後` }
+      : { kind: "final", eventIndex: null, eventKey: null, label: "全行動後の最終予測" };
+  }
+  return {
+    capturedAt: new Date().toISOString(), gameVersion: GAME_VERSION, turn: game.turn, phase: game.phase,
+    selection: def ? { cardId: card.cardId, cardName: getUnit(def.ownerId)?.hp <= 0 ? getLegacy(def.ownerId).name : def.name,
+      mode: game.mode, moveUnitId: game.moveUnitId } : null,
+    orders: game.queue.slice(0, 3).map((action, index) => ({
+      index: index + 1, cardId: action.cardId, actor: getUnit(action.actorId)?.name || action.actorId,
+      action: action.label, mode: action.mode, speed: SPEED_LABEL[action.speed],
+      target: timelineTargetLabel({ kind: "player", payload: action })
+    })),
+    preview
+  };
+}
 
 resetGame();

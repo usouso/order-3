@@ -599,3 +599,140 @@ A local headless Chrome pass rendered all twelve cards, then exercised selection
 - Automated and visual browser QA establishes display completeness, distinction, input non-interference, and responsive geometry. It does not establish that a player actually finds the needed answer faster; purpose-search speed and whether Pommel Break/Pinning Arrow are naturally sought under Control require a user playtest.
 - Forced-colors was emulated in Chrome, and 320px covers the narrow responsive state, but a physical 200% browser-zoom and screen-reader voice pass were not performed.
 - The filled SVG shapes remain intentionally compact at 12px inside a 155px card. Their Japanese text is the authoritative fallback if a particular display makes fine icon details less distinct.
+
+---
+
+# ACT 13 — local playtest notes and explicit GitHub handoff
+
+Implementation report: `act-13-implementation-01`.
+Implementer: `01a09194-239a-70f2-822a-8e42325d794d` / local (Astra).
+Base: coordinator-confirmed ACT 12 publication `f95f804f0c707454ec3006f6d49cff91c35aea32`, Pages run `34630641203` success.
+Status: implementation and implementer checks PASS; independent QA and publication remain the coordinator's next steps.
+
+## Implemented
+
+- Added one topbar `感想メモ` trigger and a named native dialog. The drawer is 420px on desktop; 720px and below uses an internally scrolling bottom sheet. A fixed-height header/footer surrounds the scroll region without covering its last row. The same trigger is reachable above the existing briefing/result overlay, including after victory/defeat. Closed battlefield, ACTION ORDER, and hand geometry is unchanged.
+- Three radio kinds (`impression / idea / bug`), free text, a last-saved editor, updated-time-sorted list with same-ID editing, and an optional scene attachment. `GAME_VERSION = "ACT 13"` is the single display version constant. The scene capture function returns detached, allowlisted turn/phase/selection/three-order/preview summaries; it never stores the deck, units, complete forecast, authentication, URL parameters, or other storage.
+- New IDs are assigned at first text input. Autosave debounces 500ms and flushes on explicit save, close, pagehide, and hidden visibility. Same-ID edits preserve createdAt; successful writes advance updatedAt. Empty text creates no saved note and does not delete a previous nonempty revision. Notes remain separate from combat reset and victory/defeat state.
+- Added `notes-core.js` for versioned local storage and plain-text sharing, `notes.js` for the independent editor, and isolated `notes.css`. Schema 1 lives at `order3.playtestNotes.v1`; known schema data retains optional fields. Unknown schema, malformed JSON/records, unavailable storage, and quota exceptions never overwrite the original payload. Raw copy/export is available for unreadable data.
+- Failed drafts remain in this tab, in the editor/list, and in complete JSON/Markdown rescue exports; they do not add a false saved count. Copy errors expose a selectable readonly textarea. Download starts retain that fallback because successful disk saving cannot be observed. Failed-save closing offers copy-first, memory-only close, and return. Copy-first does not close after an async copy if newer input has appeared meanwhile.
+- Saves re-read and merge by stable ID, updated time, and a deterministic tie order. Storage events merge already observed durable records to repair distinct-note races. A same-note update is announced without replacing the active text. Clean close does not write a stale editor. Deliberate subsequent editing saves that input as the new revision. In-memory rescue exports prioritize unsaved text even if a remote clock is ahead.
+- Only a selected note's explicit `制作に送る` click opens a new tab. It obtains a blank popup synchronously, clears opener before navigation, then navigates to the fixed `https://github.com/usouso/order-3/issues/new`. Only URLSearchParams-encoded title/body are used, with `[ORDER//3 メモ]` and the generated v1 note-ID marker. State stops at `handoff-opened`; the UI asks the user to complete the public post on GitHub. Popup failure is not reported as success.
+- Above 7000 encoded URL characters, no body query is sent. The complete Markdown is copied or exposed in the fallback, and a full Markdown download remains available beside the title-only handoff. Local copy, Markdown export, and GitHub body share one formatter. User body text is assigned with textContent/value, never interpreted as local HTML.
+- Dialog keyboard/click events do not reach the game's document handlers. Native modality and explicit Tab wrapping keep focus inside; Escape restores the opening control unless the unsaved-error close choice needs attention. No note operation calls combat render, reset, selection, mode, queue, or execution functions.
+- README and DESIGN describe use, storage/share distinctions, errors, multiple-tab semantics, the scene allowlist, and limits. No coordinator or QA record was edited. No Git command, publication, Issue creation, regular check, or external collection was performed.
+
+## Changed files
+
+- Product: `outputs/order-3/index.html`, `outputs/order-3/game.js` (version + pure scene capture only), new `outputs/order-3/notes-core.js`, `outputs/order-3/notes.js`, `outputs/order-3/notes.css`.
+- Documentation: `outputs/order-3/README.md`, `outputs/order-3/DESIGN.md`.
+- Checks: `work/smoke-test.js` (scene allowlist and nonmutation), new `work/notes-test.js`, `work/notes-browser-test.js`.
+- This record: `work/ooda/act.md`.
+- Browser evidence: `work/act13-browser/report.json`, `notes-1280.png`, `notes-700.png`, `notes-320.png`, and `failure-denied.png / failure-quota.png / failure-corrupt.png / failure-unknown.png`.
+
+## Verification
+
+Bundled Node syntax checks PASS for game.js, notes-core.js, notes.js, smoke-test.js, notes-test.js, and notes-browser-test.js.
+
+```text
+node work/smoke-test.js
+ORDER//3 smoke tests passed
+node work/notes-test.js
+ORDER//3 notes storage/share tests passed
+node work/notes-browser-test.js
+ORDER//3 browser notes tests passed
+```
+
+The complete ACT 01–12 smoke suite remains active. Added scene checks cover current board, selected technique/move, two-command final forecast, a chosen event, resolving, and ended phases; mutation of the returned object leaves game state unchanged. Storage/share tests cover empty/new/edit/restore, three kinds, stable creation time, read/write denial, quota, malformed/unknown payload preservation, optional field retention, deterministic two-tab race repair, ID fallback, short/full and long/title-only encoding, Japanese/emoji/newlines/HTML-like text, and scene-OFF output.
+
+Headless installed Chrome used local HTTP and isolated contexts. The final browser report has ten PASS groups and zero recorded console warnings/errors in the primary scenario:
+
+- 1280×720: document 1280/1280; dialog at (852,8), 420×704; dialog scroll/client width 418/418; hand top 648.9375.
+- 700×900: document 700/700; dialog at (8,132), 684×760; dialog scroll/client width 682/682; hand top 853.75.
+- 320×900: document 320/320; dialog at (8,132), 304×760; dialog scroll/client width 302/302; hand top 796.140625.
+- All three widths use 16px textarea text and 44px radio labels. The final export action scrolls above the footer. Screenshots were visually inspected. The test restores the ACT 12 topbar in a test-only response and uses a deterministic hand to assert exact closed board/timeline/hand rectangles before/after this slice.
+- Native focus trapping, Shift+Tab/Tab boundary wrapping, return focus, and a keyboard-only input → kind → attachment → save → copy → Escape sequence PASS. Safe text rendering creates no injected image elements.
+- Same-ID edits, all three kinds, last-editor reload, scene OFF/ON, preserved original scene, explicit scene refresh, empty draft exclusion, pagehide flush, reset and restart retention PASS.
+- Actual browser storage APIs are separately fault-injected for get denial, quota, corrupt JSON, and unknown schema. Each preserves text, reports zero false saved notes, protects Escape close, allows copy/JSON/raw rescue, and saves the same draft once the injected fault is removed.
+- Clipboard rejection, download API failure, popup null, very long Japanese/emoji body, and a real Markdown download retain complete text. Short and long payloads match the formatter. Autosave/edit/copy produce no external request. No test Issue is posted.
+- Two real tabs preserve distinct IDs, notify a same-note update without replacing its open editor, and avoid stale write on clean close. Pure adapter tests also exercise opposing whole-key writes followed by event reconciliation.
+- Opening/closing notes while a card is selected preserves game/valid cells/forecast/board/hand/timeline semantics. A real planned turn resolves with and without the dialog to deeply identical resulting game state and requested pause durations; the captured resolving scene remains fixed. Victory notes and restart retention PASS.
+- A real browser popup was opened, opener severance verified, and the fixed encoded destination checked with navigation intercepted before reaching GitHub. This establishes native popup/URL wiring without publishing fabricated feedback.
+- Static product scan found no `ghp_`, `github_pat_`, private-key header, Authorization header, fetch, XMLHttpRequest, sendBeacon, or setInterval occurrences (rg's no-match exit was 1).
+
+## Limits and next step
+
+- Independent QA is still required before Git saving and publication. The final test scripts close their browser/server resources; no monitor is left running.
+- Actual GitHub login, actual GitHub form prefill behavior, final Issue submission, and a posted user note's later OODA incorporation have not been exercised. The true popup test intercepts the destination; it is not evidence of a real GitHub post.
+- Physical 200% browser zoom, screen-reader speech, Safari/iOS/private-mode behavior, real device storage exhaustion, and human usability are unmeasured. Narrow viewport coverage and injected exceptions are not claimed as those checks.
+- Same-note simultaneous edits use notified last-edit-wins semantics, not automatic text merging/history. Browser-local data is lost on site-data clearing or private-session exit. There is no JSON import or note deletion UI in this ACT.
+- Timing validation compares requested pause durations and complete execution state; it does not claim nanosecond wall-clock equality while the browser handles note input.
+- Next: coordinator dispatches independent ACT 13 QA using `decision.md` as the authority, then owns any correction request, Git checkpoint, and publication.
+
+---
+
+# ACT 13 correction — stale-share content rollback (ACT13-QA-01)
+
+Report: `act-13-fix-01`.
+Implementer: `01a09194-239a-70f2-822a-8e42325d794d` / local (Astra).
+Input: independent QA `act-13-qa-01`, P1 `ACT13-QA-01`; observe.md and `work/act13-independent-qa/extra-report.json` / `work/act13-qa-extra.cjs` were read. Independent QA files and evidence were not changed.
+Status: fix and implementer revalidation PASS; independent re-QA is required. No Git or publication action.
+
+## Defect and correction
+
+The old share handler treated handoff metadata as an editor change: it marked a stale draft dirty and flushed the entire record. The ordinary edit save then advanced updatedAt past the newer record, replacing another tab's saved body. The same mechanism could replace kind and scene.
+
+- Share now flushes only actual pending editor changes. For a clean editor, it re-reads storage on every share click and compares body, kind, and scene rather than relying on an already delivered storage event. If the saved content differs, it leaves both versions untouched, opens no popup, and directs the user to the existing list Edit control to review the latest saved version. It does not silently substitute a different shared body. Subsequent deliberate content editing keeps the existing last-edit-wins behavior.
+- The URL and long-text copy use an immutable snapshot of the clicked draft. A shared copy always corresponds to that input, including its kind and optional scene.
+- A separate `recordHandoff()` operation re-reads the stored record after popup navigation. It modifies only share metadata, only when the stored body/kind/scene still matches the handed-off snapshot. It never submits the editor to the full-content save path and never advances content updatedAt. Another save between preflight and handoff recording is retained; the UI explains that the click-time text was handed off and the new saved content was not changed.
+- Content merge priority excludes share metadata. For matching content, handoff timestamps merge independently; a newer handoff timestamp cannot promote older content over a newer edit. Clean editor close/reshare remain read-only with respect to its stale content.
+- Quota/storage errors retain their existing unsaved-draft state. Sharing a failed draft records its handoff only in that draft's memory until an actual later save succeeds; it does not incorrectly make a clean editor dirty. Corrupt and unknown schemas remain write-protected. Popup failure records no successful handoff. Full text rescue remains available.
+- README/DESIGN now describe the conflict-before-share review step and the content/metadata distinction. No ACT 14 design or effect description was included.
+
+## Changed files and evidence
+
+- Product: `outputs/order-3/notes.js`, `outputs/order-3/notes-core.js` only.
+- Documentation: `outputs/order-3/README.md`, `outputs/order-3/DESIGN.md`.
+- Tests: `work/notes-test.js`, `work/notes-browser-test.js` (optional work-relative evidence output override), new `work/notes-share-regression.js`.
+- Record: this ACT section. No game.js, HTML, CSS, ACT 12 category, combat, coordinator, or QA record change.
+- Dedicated fix evidence: `work/act13-fix-browser/share-regression-report.json` (PASS, seven groups, errors empty), `stale-share-blocked.png` (visually inspected).
+- Complete browser rerun evidence: `work/act13-fix-browser/full/report.json` (ten PASS groups, primary-scenario errors empty) and width/failure screenshots. `ORDER3_BROWSER_EVIDENCE=act13-fix-browser/full` kept previous implementation and independent-QA evidence intact.
+
+## Verification
+
+Syntax PASS for game.js, notes-core.js, notes.js, smoke-test.js, notes-test.js, notes-browser-test.js, and notes-share-regression.js. Executed:
+
+```text
+node work/smoke-test.js
+ORDER//3 smoke tests passed
+node work/notes-test.js
+ORDER//3 notes storage/share tests passed
+node work/notes-share-regression.js
+ORDER//3 stale-share regressions passed
+node work/notes-browser-test.js
+ORDER//3 browser notes tests passed
+```
+
+The dedicated browser regression uses actual Chrome tabs and local storage. It verifies:
+
+1. A keeps original text/kind/scene while B saves a new body, bug kind, and TURN 04 scene. Three unedited A share clicks open no popup and leave the durable record byte-for-byte unchanged. Reloading both tabs restores B's complete record.
+2. With A's storage-event delivery suppressed, share still detects the latest data. Explicit list Edit loads that version; repeated normal shares keep body/kind/scene, createdAt and content updatedAt, and send the exact displayed Markdown.
+3. Pending intentional input, kind and scene changes flush before normal sharing. Popup failure on a clean editor changes no stored bytes; popup failure after actual input preserves that intentional edit without fabricating new handoff metadata.
+4. A deterministic injected write between popup navigation and metadata persistence retains the intervening new body/kind/scene. The already generated URL contains the click-time text, the message explicitly distinguishes it from the new saved record, and a repeat stale click is blocked. Both tabs restore the new revision.
+5. A real B edit after A's successful handoff survives a delayed old metadata event and another stale A share click.
+6. Long text produces title-only handoff plus complete snapshot copy. When B subsequently updates the record, stale A long-share neither opens a popup nor overwrites/copies an unintended version.
+7. Quota plus clipboard failure retains the complete unsaved long draft, selectable rescue, and failed-close protection; retry saves it. Corrupt/unknown stored payloads remain exactly unchanged by sharing.
+
+Pure storage tests additionally assert that metadata writes leave content timestamps unchanged, stale recordHandoff returns changed without any write, matching-content metadata merges in both input orders, even a far-future old handoff timestamp cannot beat a newer content revision, each of body/kind/scene differences is detected, and quota/unknown/corrupt metadata writes are nondestructive.
+
+The full browser suite still passes 1280/700/320px geometry, keyboard flow, scene capture, original non-interference checks, real turn resolution/pause sequence, native intercepted popup, failure recovery, and complete exports. No test Issue was posted. All test servers/browser contexts close at the end.
+
+Validated SHA256:
+
+- notes.js: `1AE0FE024E699D1DCE8D2FB0971960E1AF6398BBC7B143607E5D0EEDAD5B0265`
+- notes-core.js: `2A064665CC278B3793AD33013B314A01F92A8CD4DC8D6F8E5CE42EC002086E7C`
+- notes-share-regression.js: `31EA35319067BD79E04E561046DA675FB15D47729D1A40D720EA2796DCEDD021`
+
+## Remaining scope
+
+This correction has not received independent re-QA and is not published. Real GitHub authenticated form submission, physical 200% zoom, screen-reader speech, Safari/iOS, private-mode behavior, actual disk/storage exhaustion and human usability remain unmeasured as previously recorded. The popup/write interleaving test is an explicit injected timing fixture; it is distinct from the real two-tab before/after tests. Intentional content edits retain notified last-edit-wins behavior; collaborative text merging/history is outside ACT 13. Next step is independent re-QA of ACT13-QA-01 and the existing ACT 13 guarantees.

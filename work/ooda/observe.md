@@ -693,3 +693,153 @@ TURN 01〜03を通常操作で進め、TURN 03の生命吸収、息を整える�
 - 「用途分類で判断速度や面白さが上がるか」はプレイヤー観察が必要で、今回の機能QAでは未測定である。
 - 実機スクリーンリーダー音声、物理200%ズーム、OSのforced-colors切替は未実施。aria順、640px相当幅、forced-colors CSS、全内容収まりは自動検査で合格した。
 - QA判定上はGit化・公開へ進める。QA担当はGit操作と公開を行っていないため、公開環境はACT 11のままである。
+
+---
+
+# OBSERVE / ACT 13 — 感想メモの独立QA
+
+実施: 2026-09-12 JST。reportId: `act-13-qa-01`。
+担当: 観察・独立QA / `01a09193-f91c-7ad3-89ff-c2ab8f19966b`（Astra）。
+対象: `C:/Users/nonus/Documents/Codex/2026-09-11/new-chat-2` の未コミットACT 13。公開ACT 12は今回の検査対象外。
+基準: decision.mdのDECIDE / ACT 13全文。実装報告は参考情報とし、以下はQA自身が再実行・追加検査した結果。
+
+## 総合判定: FAIL — P1 1件、P0/P2なし
+
+通常経路と既存検査は通るが、同一メモを複数タブで開いている場合に、本文を編集しない共有操作だけで新しい保存本文を古い本文へ戻せる。感想を失わず記録する目的に反するため、現版の公開を推奨しない。
+
+### P1 / ACT13-QA-01: 古いタブの「制作に送る」が別タブの保存本文を巻き戻す
+
+再現手順（通常のブラウザ保存が可能な状態）:
+
+1. 同一originのタブAでメモを新規作成し、本文 `QA 元の本文 A` を自動保存する。メモ欄は開いたままにする。
+2. タブBで同じページを開き、同じIDのメモを `QA 別タブで追記した新しい本文 B` に編集し、自動保存を待つ。
+3. タブAには「別のタブでこのメモが更新されました」という案内と、元の本文Aが残る。この時点でlocalStorageの保存本文はBで正しい。
+4. タブAでは本文・区分・場面を一切編集せず、「制作に送る」だけを押す。
+5. 同じIDの保存本文がAへ戻り、share.stateはhandoff-openedになる。再読込するとAが表示され、Bの追記は永続保存から失われている。
+
+実測ID: `afa36fe8-688b-4f8f-80a6-c180536ac477`。別タブの編集欄BにはまだBが残っているが、永続履歴や自動復元はなく、両タブを閉じると失われる。競合案内は「ここで編集を続けると、この入力内容を保存します」と説明するが、再現では編集を続けていない。
+
+原因の対応箇所: `outputs/order-3/notes.js` のshare()、特に211–215行付近で共有metadataの更新と同時に古いdraft全体をdirtyとしてflushする。`notes-core.js` のsave()、63行付近が保存候補のupdatedAtを既存版より新しくし、古い本文を勝者にする。単なる共有状態更新と、利用者による本文改稿が区別されていない。
+
+期待: 未編集の古い入力を共有する場合でも、共有操作の副作用で新しい保存本文・区分・場面を消さない。共有metadataだけを最新の保存版へ反映する、または競合を解消してから共有する等の方針は司令塔・実装担当が決める。開いている入力欄の保持も維持する。
+
+証拠: `work/act13-independent-qa/extra-report.json` のstaleShare（共有前B、共有後A、再読込後A）、`stale-share.png`。独立追加検査 `work/act13-qa-extra.cjs` で実Chromeの二つのタブ、storageイベント、実window.openを使用。外部遷移だけをinterceptし、Issueは投稿していない。
+
+修正後の必要検査: A/B同一IDの更新→古いAで共有→両タブ再読込で最新本文を保持すること。共有本文は選んだ版と整合し、意図的な再編集、通常の共有状態保存、別IDのmerge、popup失敗、場面ON/OFFを回帰確認する。
+
+## 実行した検査と通過範囲
+
+| 条件 | 独立確認結果 |
+| --- | --- |
+| 構文・既存回帰 | game.js / notes-core.js / notes.js / smoke-test.js / notes-test.js / notes-browser-test.js のnode --check成功。全ACT 01–12スモークとnotes-test.jsが成功。QA追加JSも構文成功。 |
+| 既存ブラウザ検査の再実行 | 実装者の検査をQA側で実行し10グループ成功。元の証拠は上書きせず、`act13-qa-rerun.cjs`で出力先だけ`work/act13-independent-qa`へ変更した。主シナリオのconsole warnings/errorsは0。 |
+| 新規・編集・永続性 | 3区分、同一ID編集、createdAt維持、再読込、再戦、空白だけのメモを除外。合成pagehideに加え、独立追加検査で500ms待たず実際にabout:blankへ離脱して戻っても全文復元。 |
+| 場面 | ON/OFF、元場面の保持、明示更新、selected cardと技法/move、queueと予測stage、ACT 13版名。スモークのallowlist・非破壊確認に加え、CUAで火種の罠選択中→メモ保存→(4,5)へ命令確定→再開して元の選択場面が残る→明示更新で最終予測/命令01/対象(4,5)へ変わることを確認。 |
+| 保存拒否・容量不足・破損・未知版 | 実Chromeの保存APIに障害を注入。元payloadを上書きせず、本文保持、再試行、失敗時閉じる選択、コピー/JSON/元データの救済成功。追加検査で失敗した別IDの下書き2件を作成し、新規切替後もJSONに両方の完全な本文が残り、保存件数は0。障害除去後に一方を保存しても、もう一方は救済出力へ残った。実ディスク容量枯渇ではない。 |
+| 複数タブ | 別IDのメモを両方保持、同じIDの外部更新が開いた入力欄を無言で置換しない、未編集の閉じるで古い本文を上書きしないことはPASS。ただし共有操作は上記P1でFAIL。 |
+| 長文・文字・救済 | 日本語、絵文字、改行、HTML風本文が文字として保持され、画像/スクリプトにならない。長文の無断切捨てなし。clipboard拒否・download API失敗でも選択可能な全文が残る。実Markdown download、保存失敗の閉じる保護を確認。 |
+| 明示共有 | 固定GitHub URL、title/bodyだけ、title接頭辞、先頭v1 note-id marker、選んだ一件だけ、scene OFF時の除外、長文title-onlyと完全な本文救済がPASS。実popupのopenerはnull。popup null時に偽成功なし。編集/自動保存/再読込/再戦では外部要求なし。 |
+| 戦闘非干渉 | 選択・valid cells・queue・forecast・盤面/手札/timelineのfingerprintがメモ前後で同一。実Chromeの同一作戦をメモなし/ありで解決し、結果stateと要求pause列が同一。CUAでも火種の罠を実際に登録・実行しTURN 02へ進み、メモ3件と本文が保持された。 |
+| 勝敗・再戦 | 既存ブラウザ検査は勝利状態fixtureでメモ作成、ended scene、既存再戦ボタン後の保持を確認。実操作で最後まで勝利/敗北する人間プレイは今回行っていない。 |
+| キーボード・focus | Tab/Shift+Tab境界、キーボードのみの本文→区分→添付→保存→コピー→Escape、閉じた後のtriggerへのfocus復帰、背後入力への非伝播がPASS。 |
+
+## レイアウトと目視
+
+独立実行のPNG `notes-1280.png`、`notes-700.png`、`notes-320.png` を目視。本文16px、選択区分のラベル44px、本文・操作は内部縦スクロールで到達でき、末尾の書き出しボタンもfooterの上へ表示できる。狭幅の内容を横方向へ欠落させる事象は見つからなかった。
+
+| viewport | dialog | 横幅/閉状態 |
+| --- | --- | --- |
+| 1280×720 | (852,8)、420×704 | document 1280/1280、dialog client/scroll 418/418、手札上端648.9375 |
+| 700×900 | (8,132)、684×760 | document 700/700、dialog 682/682、手札上端853.75 |
+| 320×900 | (8,132)、304×760 | document 320/320、dialog 302/302、手札上端796.140625 |
+
+上記の閉状態は、検査レスポンス内でACT 13 topbar追加だけを戻したACT 12相当baselineとのboard/timeline/hand矩形比較に合格。製品ファイルを書き換えてbaselineを作ってはいない。
+
+## 実GitHub到達と未確認点
+
+- CUAのアプリ内ブラウザで短い架空本文 `QA確認のみ（投稿しません） 日本語 🧭 & #`、scene OFFを作り、明示共有後の文言が「GitHubで投稿を完了してください」であることを確認。popupの遷移先はCUAのタブ一覧へ現れず、同ブラウザから直接は検査できなかった。
+- アプリの「このメモをコピー」で得た完全なMarkdownと同じtitle/bodyを使い、固定URLをQAタブで別途開いた。GitHubのSign in画面へ到達し、loginのreturn_toが元のencode済み投稿URLと完全一致した。ログイン・アカウント作成・最終投稿は行わず、そのQAタブを閉じた。したがってURL保持は確認済みだが、認証後の実Issueフォームprefill/キャンセルは未確認。
+- 実popup/open/opener検証はChrome側のintercept検査であり、実GitHubフォーム到達と同一視しない。実投稿・後続制作取込は未検証。人間の使いやすさ・面白さ・判断速度向上も未測定。
+- 物理200%ブラウザズーム、スクリーンリーダー音声、Safari/iOS、private mode、実ストレージ容量枯渇は未確認。狭幅・ARIA・障害注入で代替したものを実機検証とは扱わない。
+
+## 検査対象と作業境界
+
+- notes.js SHA256: `65E42E7CC401B91B2430641E433A924973875B5CD2DAEE2A2DDA142BC3D71EBF`
+- notes-core.js SHA256: `60249C335315C44C26273C5D42D261E10C9D65BFF4B3CD69B59CC9529EDB8EFD`
+- 製品・既存テスト・Git・公開・司令塔記録は変更していない。変更したOODA成果物は本observe.mdのみ。新規の検査用一時JSは`work/act13-qa-rerun.cjs`、`work/act13-qa-extra.cjs`、`work/act13-qa-server.cjs`。証拠は`work/act13-independent-qa/`。
+- 検査用ChromeとQAのCUAタブを閉じ、localhost:43133の一時サーバーを停止。定期チェック・監視は作成していない。
+- 次工程: 司令塔から実装担当へP1修正を依頼し、その完了後に独立再QA。今回のFAILをもって公開しない。
+
+---
+
+# OBSERVE / ACT 13 — ACT13-QA-01修正の独立再QA
+
+実施: 2026-09-12 JST。reportId: `act-13-qa-02`。
+担当: 観察・独立QA / `01a09193-f91c-7ad3-89ff-c2ab8f19966b`（Astra）。
+対象: `C:/Users/nonus/Documents/Codex/2026-09-11/new-chat-2` の未公開ACT 13修正版、実装報告 `act-13-fix-01`。
+
+## 総合判定: PASS — ACT13-QA-01解消、P0/P1/P2なし
+
+前回P1の「古いタブの共有操作で最新版を巻き戻す」経路は解消した。未編集の古い入力は共有前に検出され、保存内容と入力欄を保持したまま、popupを開かず一覧の編集へ案内する。一覧で最新版を確認した後は、その本文・区分・場面が共有され、共有記録だけで本文の更新時刻は進まない。
+
+これは検査時ハッシュに対する機能QA判定であり、公開完了や人間の使いやすさの実証ではない。前回FAILは修正前のハッシュへの記録として残す。
+
+## 中断と再開の扱い
+
+再起動前にQA自身が実行した構文・全スモーク・notes-testはPASS。共有回帰7グループの最終JSONも`work/act13-independent-qa02/regression/share-regression-report.json`へstatus PASSで保存されていた。再開時にnotes.js、notes-core.js、notes-share-regression.jsのSHA256が中断前と一致することを確認し、これらを理由なく再実行しなかった。
+
+再開後は一時サーバー/Chromeを新規作成して独自検査とメモ機能のブラウザ回帰を完了した。旧プロセスを生存しているものとして扱わず、最終報告は同じ`act-13-qa-02`一件へまとめる。
+
+## 元の再現手順と独立結果
+
+独立追加検査 `work/act13-qa02-native.cjs` は実Chrome、同一originの実タブA/B、実window.openを使用した。GitHubの遷移先だけをテスト応答に置き換え、実Issue投稿は行っていない。
+
+1. Aで `独立再QA 元の本文 A` を保存し、Bで同じIDを開く。
+2. Bで本文だけ、区分だけ、scene添付だけを順に変更する。各ケースの開始時にA/Bを最新版で再読込し、変更対象を分離する。
+3. Aでは何も編集せず各ケース3回、合計9回「制作に送る」を押す。
+4. 全ケースでnative popup数は0、保存文字列は変更前とbyte単位で同一、Aの本文/区分/添付/場面表示とgame stateも不変だった。表示は「共有画面は開いていません」となった。
+5. 両タブを再読込すると、同一IDのBの最新本文・区分・sceneと保存metadataがそのまま復元された。
+
+対象ID: `17d1ffa6-358b-4a11-8a01-9d2a796d5171`。詳しい各ケースの最新版と結果は`work/act13-independent-qa02/native/native-report.json`のcasesに保存した。
+
+## 共有・保存・本文救済の検証範囲
+
+| 条件 | 結果と証拠の性質 |
+| --- | --- |
+| 最新版を明示確認した後の共有 | 競合中に一覧の編集を押して最新版を読み、native popupで2回共有。固定URL、title/bodyだけ、完全な日本語/HTML風/絵文字本文、scene OFF時の除外、opener nullを確認。id/createdAt/updatedAtは変わらずshareだけが更新された。 |
+| 実際のpending入力 | 本文入力後、自動保存前であることを保存値の不一致で確認して共有。クリック時の入力が保存され、popupの完全な本文と一致。意図的な編集まで妨げる変更はなかった。 |
+| storageイベント未達 | Cのstorageイベント配送を抑止してBで区分だけ変更。Cの共有クリックで保存内容の差異を検出し、入力欄/保存内容を維持、native popupなし。実データの読直しがイベントに依存しないことを確認。 |
+| popupとmetadata保存の間の変更 | 中断前にQA自身が実行した7項目回帰で、popup navigation後に新しい本文/区分/sceneを保存するタイミングfixtureを確認。新しい保存は維持され、既に開いたURLはクリック時の本文、案内はこの違いを明示。これは決定的な障害注入であり、実タブによる同時刻の競争を測定した主張ではない。 |
+| 共有後の編集と遅延metadata | native共有後、Bで実際に本文を更新。古い本文の共有記録に2099年のhandoff時刻を付けた遅延storageイベントをAへ注入しても、最新の本文は変わらず、Aからの再共有は停止。両タブ再読込でもBの最新本文を確認。content更新とshare時刻の優先関係を確認。 |
+| popup失敗 | QA実行の7項目回帰で、未編集時のpopup nullは保存文字列を変更しない。pending入力時は意図的な入力だけを保存し、成功した共有metadataを捏造しない。 |
+| 短文/長文と入力欄の整合 | native短文popupは表示中の最新版Markdownと完全一致。長文はtitle-only URLで、全文コピー対象はクリック時snapshotと完全一致した。共有後に新しい入力をした後でclipboardを非同期失敗させても、救済欄には元の長文が完全に残り、新しい入力欄は変わらなかった。 |
+| 保存失敗の複数下書き | quotaを注入し、別IDの未保存メモ2件をそれぞれnative共有。両方の本文とhandoff metadataがJSON救済へ残り、localStorageはnull、保存件数0。障害解除後に片方を保存しても、他方は完全な救済出力に残る。 |
+| 保存拒否/破損/未知版 | QA実行の7項目回帰とメモブラウザ回帰で、原文payloadの保持、保存成功の誤表示なし、再試行、全文コピー、書出し、失敗中の閉じる保護を確認。実容量枯渇の検証ではなくAPI障害注入。 |
+| 別IDのmergeと戦闘非干渉 | メモブラウザ回帰で別タブの別ID保持、同ID入力欄を無言で置換しないこと、clean close、再読込、再戦、scene capture、game/選択/queue/forecast/DOM fingerprint、実作戦解決と要求pause列がPASS。 |
+
+## 実行結果と新しい証拠
+
+- 構文、全ACT 01–12スモーク、notes-test.js: 中断前の独立実行PASSを同一ハッシュで引継ぎ。独自追加JSもnode --check PASS。
+- `work/act13-qa02-regression.cjs`: 7項目PASS、errors空。実装者の検査sourceは変えず、証拠出力先だけを独立ディレクトリへ置換。保存済み結果は`work/act13-independent-qa02/regression/share-regression-report.json`。
+- `work/act13-qa02-native.cjs`: 再開後の独立追加6グループPASS、pageerror 0。報告は`work/act13-independent-qa02/native/native-report.json`。
+- `ORDER3_BROWSER_EVIDENCE=act13-independent-qa02/full`を指定してnotes-browser-test.jsを一度実行。保存/mergeの変更がメモ全体へ波及しないことを確認し、10グループPASS。主シナリオのconsole warnings/errors 0。報告は`work/act13-independent-qa02/full/report.json`。
+- `work/act13-independent-qa02/native/native-conflict-320.png`を目視。320pxで長い競合案内と「共有画面は開いていません」の全文に横欠けはなく、縦スクロールで一覧の編集へ到達できた。編集ボタンのfocus矩形がheaderとfooterの間に収まることも確認。既存ブラウザ回帰の1280/700/320px、focus/Tab/Shift+Tab/Escapeと閉状態の矩形維持もPASS。
+
+## 検査時ハッシュ
+
+製品は再開時と全検査終了時に同じ値だった。
+
+- notes.js: `1AE0FE024E699D1DCE8D2FB0971960E1AF6398BBC7B143607E5D0EEDAD5B0265`
+- notes-core.js: `2A064665CC278B3793AD33013B314A01F92A8CD4DC8D6F8E5CE42EC002086E7C`
+- notes-share-regression.js（中断前の検査を引き継ぐ根拠）: `31EA35319067BD79E04E561046DA675FB15D47729D1A40D720EA2796DCEDD021`
+- QA独自act13-qa02-native.cjs: `34AA0E9A55BEB64F7066A3286686123F02CEDB3B411011EAEA7FF1C8475150D4`
+
+## 未確認と引き継ぎ
+
+前回の実GitHub Sign in到達とreturn_to完全一致の確認を引き継ぐ。認証後の実Issueフォームprefill/キャンセル、最終投稿と制作取込は未確認。今回もGitHubへの架空Issue投稿、ログイン、アカウント作成は行っていない。native popupの確認は遷移先interceptまでで、実GitHubフォーム確認と混同しない。
+
+物理200%ブラウザズーム、スクリーンリーダー音声、Safari/iOS/private mode、実容量枯渇、人間の使いやすさ・面白さは未確認。前回の勝利状態fixtureによるメモ/再戦確認を、実試遊で勝敗まで完走したものとは扱わない。
+
+製品・既存テスト・Git・公開・decision/COORDINATION/stateは未変更。ACT 14は混ぜていない。再開後の書込みは新規QA一時JS1件、独立証拠、本observe.mdに限定し、限定された書込み権限で実施した。検査用Chrome/コンテキストと一時HTTPサーバーは各検査のfinallyで終了し、定期確認や常駐プロセスを作成していない。
+
+次工程: 司令塔がこのハッシュと差分を確認し、Git保存・公開工程へ進める。QA担当は公開していない。完了報告は`act-13-qa-02`として既定の新司令塔へ一度送り、返答を待たず終了する。
