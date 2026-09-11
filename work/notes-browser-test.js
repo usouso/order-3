@@ -13,7 +13,7 @@ const server = http.createServer((req, res) => {
   res.setHeader('Content-Type', name.endsWith('.js') ? 'text/javascript' : name.endsWith('.css') ? 'text/css' : 'text/html');
   let source = fs.readFileSync(path.join(root, name), 'utf8');
   // ACT 12 layout baseline: undo only this slice's topbar additions in the served test response.
-  if (name === 'index.html' && req.url.includes('baseline')) source = source.replace(/<link rel="stylesheet" href="notes.css">/, '').replace(/<div class="topbar-tools">[\s\S]*?<\/div>/, '<button class="icon-button" id="help-button" aria-label="遊び方">?</button>').replace(/  <dialog id="notes-dialog"[\s\S]*?<\/dialog>/, '').replace(/  <script src="notes(?:-core)?\.js"><\/script>\n/g, '');
+  if (name === 'index.html' && req.url.includes('baseline')) source = source.replace(/<link rel="stylesheet" href="notes.css">/, '').replace(/<div class="topbar-tools">[\s\S]*?<\/div>/, '<button class="icon-button" id="help-button" aria-label="遊び方">?</button>').replace(/  <dialog id="notes-dialog"[\s\S]*?<\/dialog>/, '').replace(/  <script src="notes(?:-core)?\.js"><\/script>\r?\n/g, '');
   res.end(source);
 });
 let browser;

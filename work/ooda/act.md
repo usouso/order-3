@@ -795,3 +795,159 @@ Validated SHA256:
 ## Limits and next step
 
 Independent ACT 14a QA and publication are pending. B1/B2 edge cases were observed in artificial browser fixtures and tested in all three resolution paths; the ordinary turn does not establish their frequency during natural play. No new narrow-layout, physical 200% zoom, screen-reader, Safari/iOS, GitHub authentication/submission, or full ACT 13 failure pass is claimed. UI layout and note implementation are unchanged. The user-reported note opening issue was resolved by browser refresh according to the coordinator; this task did not add a note/index fix. Next step is independent `act-14a-qa-01`, then coordinator-owned Git/publication. ACT 14b remains a subsequent task.
+
+---
+
+# ACT 14b — 全効果の短文と完全説明
+
+2026-09-12 JST。実装担当 `01a09194-239a-70f2-822a-8e42325d794d`。報告ID `act-14b-implementation-01`。実作業場所 `C:/Users/nonus/Documents/Codex/2026-09-11/new-chat-2`。
+
+状態：実装・実装者検証完了。独立QA待ち、未公開。司令塔からACT 14aの独立QA `act-14a-qa-01` PASS、main `de079578ba08c19b0a84beef7574ae871b2569ab`、Pages run `34640500676` successを受領してから開始した。直前共有メモ0件も引継ぎ情報であり、実装担当による再取得はしていない。
+
+採用仮説：短い予告・カード本文に独立した全効果を示し、完全説明で対象条件・寿命・消費・連携を読めるようにする。ユーザー直接要望「生命吸収には帯電付与の効果もある？起こることは全部テキストに書いてね」、decisionの14b、orient末尾 `act-14-design-01` とVISIONに沿った。B1/B2は14aで解決済みの条件を説明し、未解決の正規能力として残していない。
+
+## 実装
+
+- 表示版を `ACT 14b` に更新。`effectCatalog`へ9敵技＋12カード＋3遺志の短文・完全説明を、`effectRules`へ6状態、距離、予告対象、速度・不発、肩代わり、反撃、遺志・ALT、次ターンを収めた。ALTは24件とは別の共通説明。戦闘resolverはこの表示metadataを読まない。
+- カード本文、敵予告、ACTION ORDERとそのariaへ同じ短文を反映。生命吸収の可視短文・ariaに2ダメージ、現在HP最少の負傷敵を最大2回復、実回復分の帯電、合計上限2を含めた。敵技の先頭2文切断を廃止し、味方イベントにも現在の固有技・遺志・ALTの短文を表示する。
+- 既存「敵の効果詳細とHP」、選択・登録済みイベントの `timeline-detail-panel` にnative detailsを追加。命令0件でも敵の完全説明が読める。手札本文は選択後の詳細位置を明示し、遺志にもFASTを可視表示。遊び方の折畳み索引では未ドロー・未予告も含む24件を読むことができる。
+- 「効果の規則」と「この計画の予測結果」を分けた。予測がない時にも規則は残る。`arcSparkBreakdown`とその選択補助計算を削除し、結果は既存スナップショット差分とoutcomeログから表示。説明のための戦闘二重計算は追加していない。
+- 反撃の減少は既存ログによる発動、対象が一致する柄打ち解除、次の行動での終了、根拠が不足する場合の中立な終了を区別。火種の罠は既存配列の同座標件数から1→2、2→1などを補足する。罠の重複や発動ルールは不変。
+- 盤面の固定6チップを維持。補助説明に庇護対象と有効／中断、装甲0でも残る反撃を表示し、フォーカス／hover／状態面touchから読める。HP0駒は追加描画しない。
+- 完全説明は11px・行高1.6、折返しで縦に伸びる。ボタンの中に別のボタン／detailsは入れない。遊び方は本文のみスクロールし、戻るボタンを保持。HelpでTab／Shift+Tabの境界とEscape／フォーカス復帰を設け、初回・勝敗モーダルの既存Tab経路へその境界を適用しない。開閉状態はgameとは別の表示用Setに保持する。
+- 700pxの155px横手札、320pxの1列、18px実行順見出しを維持。予測段階注記を待機者と折返し可能な同じ行に置き、700pxで手札カード上端を残す。ALTと速度は狭いカード内で折返し、重なりを防ぐ。文字のclamp・ellipsis・縮小で説明を落としていない。
+- READMEの「まだ入れていないもの」の下に混在していた現行規則を分離。DESIGNは現行各4枚・計12枚と将来6案を区別し、盾を固める、柄打ち、離脱射撃、位相交換、追跡獣、反撃姿勢、生命吸収、災印解除などを現行挙動へ同期した。
+
+## 24件の対応照合
+
+全件の実際の短文・完全説明・関連共通規則は `work/act14b-browser/audit.json` のcatalogに記録した。以下は設計に対して判断を変える条件の対応表。全件がゲーム内索引と、それぞれの敵詳細／選択詳細へ接続済み。寿命などは同じ詳細内の名前付き共通ルールを直接開ける。
+
+| 技・カード・遺志 | 短文の全独立効果と完全説明の要点 |
+| --- | --- |
+| 忍び寄る | FAST、最寄り固定、最大2接近、隣接2ダメージ。経路・移動不能・罠・生存条件、届かない時の不発。 |
+| 飛びかかり | NORMAL、最遠固定、最大3接近、隣接4。壁／駒を越えず、停止後の生存・隣接判定。 |
+| 息を整える | SLOW、最寄り固定、開始時隣接なら2、そうでなければ最大1接近のみ。回復・耐性変化なし。 |
+| 庇護 | FAST、城壁兵以外の現在HP最少を予告時固定（他なしなら自身）、距離無制限で装甲+4。発動時隣接で庇護成立、同ターン何度でも、距離で中断／復活。 |
+| 盾の圧力 | NORMAL、最寄り固定、最大1接近後3＋元対象へ露出。両者生存・隣接条件、罠撃破時は全不発、ダメージ後の生存・結界・肩代わりとの順序。 |
+| 反撃姿勢 | SLOW、装甲+6、近接反撃4を1回。残る装甲全体と未使用反撃の期限、全吸収時の反撃、射撃除外、柄打ちによる先行解除。 |
+| 災印を刻む | FAST、装甲最少・同装甲なら現在HP最少を中心に固定十字。壁／盤外除外、既存配置置換、即時無被害、次ターン起爆の条件、設置は詠唱取消対象外。 |
+| 災印起爆 | SLOW、距離無制限、災印上の生存味方だけに各地形4。結界、柄打ち取消、起爆イベント時の消去、術者撃破時は災印残留。 |
+| 生命吸収 | NORMAL、予告時現在HP最少味方への固定・距離無制限2。その後に生存負傷敵から現在HP最少を選び最大2回復＋実回復分の帯電。自身可、同点順、0／1／2、被害0でも回復、事前対象死亡と自身の攻撃による撃破の区別、帯電上限／連鎖／消費／期限。 |
+| 踏み込み斬り | NORMAL、射程2、距離2時だけ1接近、上下左右隣接へ近接3。隣接開始・経路なし・移動後不発・移動巻戻しなし。 |
+| 割って入る | FAST、2以内の他味方、最大2接近、失敗しても両者装甲+2。実行時射程再判定なし、ターン末、肩代わりは付与しない。 |
+| 盾を固める | FAST、自身装甲+5、発動時隣接の味方1人を固定し何度でも肩代わり。ヴェイル→イオナ順、隣接なし・距離中断／復活・装甲0・付随状態は元対象・ターン末。 |
+| 柄打ち | NORMAL、隣接敵の装甲・反撃・装甲持続を先に解除し近接2、その敵の後続災印起爆のみ取消。元対象の解除と肩代わり被害を分ける。設置／生命吸収／未来ターンへ取消なし。 |
+| 速射 | FAST、射程3、敵1体2。実行時射程、射線制限なし、隣接射撃は反撃外、詠唱直接解除なし。 |
+| 縫い留め | FAST、射程4、敵1体1、元対象が生存なら接近移動不能。装甲全吸収でも付与、攻撃自体は残る、ターン末。 |
+| 離脱射撃 | NORMAL、射程3、敵1体2後に隣接空きマス中の最遠へ自動1移動。空きなし、撃破後も元位置基準、近づく場合、同点順。 |
+| 狩人の印 | SLOW、射程4、標的、次の味方由来ダメージ+3。付与は無被害、罠／本体分を含み連鎖分を除く、実被害者の印、消費／持越し／重複なし。 |
+| 連鎖火花 | SLOW、射程3、本体3＋上下左右の敵全員に2＋対象の帯電（最大4）、連鎖先ありなら全消費。直前の位置／帯電、致死本体後も連鎖、斜め／二段先なし、連鎖の印除外、庇護で中心不変、個別装甲。 |
+| 位相交換 | FAST、射程3、自身＋他の生存味方のみ位置交換。経路不要、HP／状態は人物に残り、庇護は交換後の隣接条件。 |
+| 無効印 | FAST、射程3、自身を含む生存味方に結界。次の露出付与／災印1回を無効、通常被害非対象、消費／持越し／治療なし／重複なし。 |
+| 火種の罠 | NORMAL、射程3空きマス、踏む敵へ3、その移動だけ停止、1個消滅。持越し／重ね置き／術者死亡後残留／味方非発動／標的と庇護／生存隣接時の後続攻撃。 |
+| 遺志：守護 | FAST、距離無制限、生存味方へ装甲+2、ターン末。肩代わりなし、対象事前死亡時不発、ALT。 |
+| 遺志：照準 | FAST、距離無制限、生存敵へ標的。次の味方由来+3、連鎖除外、消費／持越し、付与無被害、ALT。 |
+| 遺志：残響 | FAST、距離無制限、生存味方へ結界。露出／災印1回、消費／持越し、対象事前死亡時不発、ALT。 |
+
+遺志共通：既に倒れた持ち主の手札だけを遺志として登録する。登録済み固有技の途中死亡は遺志に自動変換しない。全滅後の継続を約束しない。全技に別効果としてFASTのALTと、速度・不発・対象消失の規則を参照可能にした。
+
+## 実装者検証
+
+- `node --check`：game.js、smoke-test.js、act14b-audit.js、act14b-browser-test.js、notes-browser-test.js PASS。
+- `node work/smoke-test.js`：全スモークPASS。既存のACT 14a 20境界×予測／通常実行／旧直接経路も維持。旧説明全文・旧火花別計算への固定だけを現行契約へ更新し、対象や戦闘結果の期待値は弱めていない。
+- `node work/act14b-audit.js`：24件照合、13群PASS。変更前ACT 14aから保存した35個の戦闘・対象選択・順序・実行関数ハッシュが一致。追加の12群は本文契約、生命吸収の固定対象と動的回復先、実回復0／1／2と上限、火花の致死／斜め／印／庇護、肩代わり反復と距離、露出と結界、反撃3理由、移動カード、災印、重ね罠、遺志、表示非干渉を確認。
+- 代表実例：味方HP9／7／6でイオナ固定、敵HP4／6／6では追跡獣を回復。装甲2でHP被害0でも回復2・帯電2。先行速射で詠唱師HP6→4にすると回復先だけが詠唱師へ変わり、固定攻撃対象は変わらない。罠2個の1個発動では踏んだ敵が止まり、庇護中の城壁兵が3を受け、設置数2→1を結果に残す。
+- `node work/act14b-browser-test.js`：ローカルHTTP・隔離Chrome、7群PASS、console warning/errorとpageerrorとも0。1280×720／700×900／320×900で閉状態、長文展開、24件の索引（狭幅は長い代表5件）、12カードの実選択詳細、3遺志・ALT、対象なし、命令0、命令3、解決中Helpを確認。Enter／Space／Tab／Shift+Tab／Escapeとtouch、全文の11px以上・行高1.5以上・横はみ出しなし、ボタン内の別操作要素なしを確認した。
+- 最終ブラウザ計測：1280の通常／6イベント時の手札カード上端は約649／652px、700では約870／884px。700カード幅155px。320はカード幅278pxの1列、ページscrollWidthは各viewport幅と一致。最終6イベントは1280で全て収まり、狭幅でfocusしたイベントは横移動して全体を表示する。
+- 通常UIで初手のランダム手札から3枚をALTへ変換して登録し、作戦実行中にHelpの生命吸収説明を開いた。TURN 02へ進み、通常実行のlastResolvedStateが事前forecast.finalと一致。人工境界fixtureとは別の記録であり、自然プレイで全境界が発生したとはしていない。
+- HP0の持ち主が盤面に出ないこと、装甲0で反撃と庇護説明を開けることを実DOMで確認。説明開閉前後でgame、queue、intents、予測の戦闘状態、Math.random呼出回数が不変。解決中は自然に進行を続け、結果が一致することを確認した。
+- `node work/notes-test.js` PASS。新ブラウザ7群内のメモ回帰ではACT 13の保存場面を本文編集で保持、新規／明示更新はACT 14b、ID／createdAt保持、copyとshare本文一致、再読込、Helpとメモのfocus共存を確認した。
+- `ORDER3_BROWSER_EVIDENCE=act14b-browser/notes node work/notes-browser-test.js`：既存10群PASS、errors 0。3幅、全文安全DOM、キーボード、保存／再読込、共有／失敗救済、複数タブ、選択／解決中／終局／再戦、native popupのopener切断まで確認。GitHub通信はテスト応答で遮断し、Issue投稿なし。
+
+検査中の修正：最初の実行順DOMでは太字の数値がgridの別行になって高さを増やしたため、全文を1つのspanへ戻した。700pxの初期画面は手札コンテナだけでなくカード本体の上端とscrollY=0で再確認し、待機／最終予測注記の同じ行への配置で余裕を確保した。文字は削っていない。
+
+メモ回帰の最初の実行では、テスト用「メモなし旧画面」がCRLFのscriptタグを除去できず、既に除去したdialogにnotes.jsが接続するnullエラーを3幅で出した。変換後HTMLにdialogなし・notes script2件残留を確認し、`work/notes-browser-test.js`の削除正規表現を`\r?\n`対応にする1箇所だけを修正。製品notes.js／notes-core.js／notes.cssは不変。旧失敗は `work/act14b-browser/notes/failure.json` に保持し、その後の `notes/report.json` が合格結果。
+
+証拠：`work/act14b-browser/audit.json`、`report.json`、3幅の`*-ordinary-closed.png`／`*-six-events-closed.png`／`*-drain-help.png`／`*-drain-timeline.png`、`ordinary-turn-2.png`、`notes/report.json`。1280の6イベント、700の閉状態と詳細、320の通常状態とHelpを画像として目視確認した。既存のACT 13／14a証拠は上書きしていない。
+
+共有場所への狭いwrite権限を取得して編集。証拠ディレクトリ作成は通常実行でEPERMとなり、同じ許可済み検査コマンドをrequire_escalatedで実行して保存した。自動審査拒否・制御迂回はなし。Sitesのprofile検出はportable/configured:falseで、プロジェクト設定変更・登録・公開は行っていない。
+
+## 検証済みSHA256
+
+| ファイル | SHA256 |
+| --- | --- |
+| outputs/order-3/game.js | `0307B2AA3D4AD11CD444987B6804643F2B55D9BCCD4CA29F1190BFEA7FE8493E` |
+| outputs/order-3/index.html | `A1CB019830795AA8B613150565AE59CBA1C68A40E8C1F16F2BB0CCBB6F2BD26D` |
+| outputs/order-3/styles.css | `7AAA6CE640992950F7863CCF555D216730A01578E889628880459F433B23E6AF` |
+| outputs/order-3/README.md | `302C4A5F39B602CAEC52AA4DAA485144ABCA441B2F155029AC64B79F3D5209D0` |
+| outputs/order-3/DESIGN.md | `B6A49C1B3793459DB7E31A5CE0D342679D021874D05B168D1181DD1A02B04C7F` |
+| work/smoke-test.js | `0CA0364DB9C296872D56C4AFD6C89DFC013FCCBAFB6E68412143C14C001D2500` |
+| work/act14b-audit.js | `A8BE46172FEBCB7FA86308859DFF0AB5925224B3A71805530E505DC714755E0A` |
+| work/act14b-browser-test.js | `D86E478E3D0AB9DA42C7FAA5925F99D790543381FB9BF31672734F7227106F95` |
+| work/notes-browser-test.js | `5B0EB9C3A6DA9E8A4FD3A75F724A61DF16C185B2E592A6E34EFB4BB64AD88119` |
+
+## 未確認と次工程
+
+独立QAと公開は未実施。物理200%ブラウザズーム、実スクリーンリーダー音声、Safari/iOS、人間が結果を事前説明できるか・理解速度・面白さ、実GitHub認証から最終投稿は未確認。viewportとARIAのDOM検査で代用済みとはしない。人工境界と自動通常UI1ターンを、人間の全戦闘試遊と同一視しない。
+
+ACT 14aの戦闘resolver・AI・数値・射程・対象判定・解決順を変更せず、新カード／サイドバー／メモ機能再設計はなし。この検査範囲で新しい戦闘不具合は確認されなかった。次工程は独立 `act-14b-qa-01`。Git保存／push／Pages公開は司令塔が所有する。報告後は成果物を変更せず、定期確認・反復poll・自己通知を行わず終了する。
+
+---
+
+# ACT 14b fix — Helpから開始・再戦画面へ戻る
+
+2026-09-12 JST。実装担当 `01a09194-239a-70f2-822a-8e42325d794d`、reportId `act-14b-fix-01`。共有作業場所は `C:/Users/nonus/Documents/Codex/2026-09-11/new-chat-2`。対象は独立QA `act-14b-qa-01` のP2 `ACT14B-QA-01` だけ。修正・実装者検証完了、独立再QA待ち、未公開。
+
+QAによる24件説明・戦闘不変・3幅・通常操作・メモの通過結果を引き継ぐ。QAが14a公開元にも再現した既存由来のモーダル欠落であり、14bで新たに戦闘ルールを壊したものとは扱わない。COORDINATION、decision、observe末尾のQA報告を確認し、採用された「Help前の初回／勝敗画面とactionを保持して復帰する」方針を実装した。
+
+## 修正前の再現
+
+製品編集前に、新規 `work/act14b-fix-browser-test.js --reproduce` をローカルHTTPと隔離Chromeで実行。勝利状態への入口のみ、敵HP0＋既存finishBattleの人工fixture。以降は実キーボードで再戦ボタンからTabでHelpへ入り、生命吸収の説明を開き、Escapeで閉じた。
+
+復帰後の期待「演習完了。」に対し「命令の組み方」でassertが失敗。`game.phase=ended`、modal.hidden=true、action=closeで、QAと同じ再戦消失を確認した。修正前のFAILと前後状態／乱数／focus経路を `work/act14b-fix-browser/before-fix.json`、画像を `before-victory-Escape.png` に保存し、修正後も保持している。
+
+## 製品修正
+
+game.jsのモーダル制御部分だけを変更した。
+
+- Helpを開く前に表示中の画面があれば、タイトル・本文・ボタン文言・action・スクロール位置・元のfocus復帰先を、表示専用の1つの保存先へ保持する。戦闘stateへの参照は保存しない。
+- Helpを閉じると保持した初回／勝敗画面を戻し、開始／再戦ボタンへfocusする。初回の未設定actionも保持する。Helpを閉じるだけではresetGameを呼ばず、明示的な再戦操作でだけリセットする。
+- 普通のplanning／resolvingから開いたHelpは、従来どおり戦場へ戻る。閉じた後のHelpフラグと保存先をクリアする。
+- 表示中のHelpへの再度のshowHelpは何も上書きしない。説明の展開状態・戻り先を保ち、Helpを自身の戻り先として重ねない。
+- 新しいshowModal（勝敗の確定など）が来た時は、古いHelp戻り先を破棄して最新画面を表示する。古い初回／結果画面を後から復活させない。Help内の除去される要素をfocus復帰先へ置き換えず、メモのnative dialog表示中にも最新の結果・再戦操作を保持する。
+
+説明本文・24件metadata・Help索引HTML・CSS・index.html・README/DESIGN・メモ製品コードは変更していない。別画面追加、説明を禁止する措置、Tab経路の遮断、戦闘や再戦ルールの変更はなし。
+
+## 検証
+
+- game.js、smoke-test.js、新規fixブラウザテストの構文PASS。
+- `node work/smoke-test.js` 全スモークPASS。旧「Helpは常にhiddenになる」期待を、開く前の可視状態・タイトル・本文・actionへ復帰する契約に更新した。戦闘結果の期待値は変更していない。
+- `node work/act14b-fix-browser-test.js`：**13ブラウザ群＋1ソース不変検査PASS、console warning/error・pageerror 0。**
+- 勝利／敗北×Escape／戻るボタンの4ケースで、結果のtitle/body/button/actionを完全復元、game JSONとMath.random呼出回数が不変、再戦ボタンへfocusを確認。その後、実Enterで再戦し、TURN01・planning・queue0・modal hiddenを確認した。
+- 初回画面もEscape／戻るの両方で本文・開始操作を復元。明示開始は初期化し直さず、game／乱数不変のまま画面を閉じる。
+- 普通のplanningで選択中のALTとgame／queue／乱数を保ったまま開閉。二重showHelp呼出し（堅牢性fixture）で本文・展開・戻り先を失わない。
+- 勝利結果から3回のHelp→メモ入力／保存→メモをEscapeで閉じる→HelpへTab復帰→Helpを閉じるを検査。毎回結果を保持し、最後の実キーボード再戦後も保存メモが残る。結果からHelpへの通常操作は実Tab／Enterであり、背面の遮蔽されたHelpボタンを強制クリックしていない。
+- 新規ページの通常UIで、初期ランダム手札1枚をALT移動として登録・実行。解決中のHelpを読んだままTURN02へ進み、lastResolvedStateは事前forecast.finalと一致。閉じてもTURN02のgame／乱数を変えない。
+- 終局用にHP／位置／命令を制御した人工fixtureを、通常executeTurnで解決。勝利／敗北×Helpのみ／Help＋メモの4ケースで、Help表示中に最新結果が届くこと、予測と結果の一致、メモのfocus維持、Escapeで結果を消さないことを確認。その後に再びHelpを開閉しても最新の結果とrestartが残り、明示Enterで再戦できる。
+- 古い勝利結果を保持したHelpへ、新しい敗北の結果通知を送る追加の表示fixtureも確認。以後のHelp開閉で古い勝利を戻さず、最新の敗北／restartを保持する。
+- `node work/notes-test.js` PASS。今回必要なメモの重なり・保存・focus復帰・再戦後保持は専用ブラウザテストで確認。無関係な全障害スイートと24件境界は再実行していない。
+
+ブラウザは1280×720のheadless Chrome。`after-victory-Escape.png`と`latest-defeat-notes.png`を画像として目視し、復帰した結果本文と可視の再戦操作を確認した。証拠は新規 `work/act14b-fix-browser/` のbefore-fix.json、report.json、before/after勝敗PNG、latest勝敗PNG。Chrome・サーバーはfinallyで終了。既存14b実装・独立QAの証拠は変更していない。
+
+## 変更範囲の証明とハッシュ
+
+修正前に記録したhashと、専用テスト実行時のhashを比較した。game.jsの `let modalReturnFocus` より前と場面採取コメント以降を連結したモーダル外ソースは同一（SHA256 `95298F5D457F0D4D59C85DE440A9BFEE8A108EE17869347BCD9A370F75A41979`）。戦闘・対象・速度・AI・24件本文を含むこの領域は無差分。Helpのタイトル／本文／索引markupも同一（`3D27C44799BEA31127BF10F23E5C0C0C1830A14C0B3BB189D3F41F88AB4DE31C`）。index.html、styles.css、notes.css、notes.js、notes-core.js、README.md、DESIGN.mdの7ファイルはbyte単位で同一。この根拠で、前回QAの内容・戦闘・3幅レイアウト通過を引き継ぐ。
+
+| 変更ファイル | 修正後SHA256 |
+| --- | --- |
+| outputs/order-3/game.js | `64686043D365C2E0494856034A4FF629CEC0214034B5C030A4DB23552ACF324A` |
+| work/smoke-test.js | `55C7E69A3F1D330E61AC7506ECFEFE031DD0A014694027C9F7AC8F8CF05CB476` |
+| work/act14b-fix-browser-test.js | `795FFEC3AA0D95E657155FC4F43BCB56CE12B3B15FFA1F177E5CC7A7F83E9A50` |
+
+このほかの変更は本act.mdへの追記のみ。証拠保存先の作成が通常実行でEPERMになったため、同じ許可済み再現コマンドをrequire_escalatedで実行した。審査の拒否・制御迂回なし。Sites profileはportable/configured:false、プロジェクト設定変更なし。
+
+## 未確認・次工程
+
+独立再QA `act-14b-qa-02` と公開は未実施。終局の入口は人工fixtureであり、人間が自然に1戦を勝ち／負け切った検査ではない。物理200%ズーム、実スクリーンリーダー音声、Safari/iOS、実タッチ端末、人間の使いやすさ、実GitHub認証／投稿は今回も未確認。狭幅は無差分で前回QAを引き継ぎ、新たに実機検査したとはしていない。
+
+Git保存／push／Pages公開なし。司令塔へ `act-14b-fix-01` を一度送り、受付確認後は編集せず終了する。定期監視・反復poll・自己通知なし。

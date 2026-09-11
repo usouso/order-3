@@ -2,7 +2,7 @@
 
 ## Design promise
 
-Build a three-unit squad by combining each member's six-card kit into one shared deck. Each turn, read the enemies' announced actions and queue up to three commands. Every card is also usable as a one-tile move, so a situational card is never completely dead.
+Build a three-unit squad by combining each member's current four-card kit (12 cards total; six-card kits are a future proposal) into one shared deck. Each turn, read the enemies' announced actions and queue up to three commands. Every card is also usable as a one-tile move, so a situational card is never completely dead.
 
 The first prototype tests two questions:
 
@@ -31,8 +31,8 @@ Forecast and execution use the same side-effect-free resolver. Planning clones t
 - Brace guard and its counter persist until Bastion's next action begins. The counter only hits an orthogonally adjacent attacker.
 - Pommel Break cancels only a later Channel event explicitly present in the current timeline.
 - Inscribe targets the announced cells. Its hazard does not follow the unit used to choose those cells.
-- Ember Rune triggers when an enemy enters its cell during movement. The enemy takes 3 damage, the rune is consumed, and the remaining steps of only that movement event end. It does not apply Root, cancel the rest of the action, or prevent a later movement event; a post-movement attack still resolves if the enemy is orthogonally adjacent to its announced target.
-- Event results are derived as structured, read-only differences between their before/after snapshots: damage/healing, movement, status, guard, terrain, cover, counter preparation/consumption, and cancellation.
+- Ember Rune triggers when an enemy enters its cell during movement. The enemy takes 3 damage, the rune is consumed, and the remaining steps of only that movement event end. It does not apply Root, cancel the rest of the action, or prevent a later movement event; a post-movement attack still resolves if the enemy remains alive and is orthogonally adjacent to its announced target.
+- Event results are derived as structured, read-only differences between their before/after snapshots: damage/healing, movement, status, guard, terrain, cover, counter preparation, activation, clearing or neutral expiry, and cancellation.
 - Timeline cards show at most two change groups plus `＋他N種`. Selecting the event exposes every group and affected target in the detail panel.
 - Forecast outlines represent only effective enemy cell events that remain unresolved after the displayed stage. Materialized Ember Runes and hostile runes always come from that stage's snapshot; completed or cancelled telegraphs are not retained as outlines.
 
@@ -74,12 +74,10 @@ Role: protection, close-range control, safe setup.
 
 | Card | Speed | Effect | Purpose |
 | --- | --- | --- | --- |
-| Forward Cut | Normal | Move up to 1, then deal 3 to an adjacent enemy. | Counterattack after a Fast enemy approach. |
-| Interpose | Fast | Move up to 2 toward an ally; both gain 2 guard. | Answer focused attacks. |
-| Shield Lock | Fast | Gain 5 guard and intercept the next hit against an adjacent ally. | Answer telegraphed burst. |
-| Pommel Break | Normal | Deal 2; cancel Guard and Channel on the target. | Answer defensive and caster enemies. |
-| Hold the Line | Normal | Choose a three-cell line; allies on it gain 3 guard. | Formation payoff. |
-| Cleaving Arc | Slow | Deal 3 to all adjacent enemies. | Reward grouping/setup. |
+| Forward Cut | Normal | Range 2. At distance 2 approach 1 via an empty path, then deal 3 melee damage if orthogonally adjacent; already adjacent needs no move. | Counterattack after a Fast enemy approach. |
+| Interpose | Fast | Select another living ally within 2. Approach up to 2; both gain 2 guard even if approach fails. No range recheck or interception grant. | Answer focused attacks. |
+| Shield Lock | Fast | Gain 5 guard and intercept every hostile damage instance to one fixed ally selected among adjacent Vale, then Iona, while alive and adjacent this turn. | Answer telegraphed burst. |
+| Pommel Break | Normal | Clear the target's Guard, persistent Guard and counter, then deal 2 melee damage; cancel only its later Detonate this turn. | Answer defensive and caster enemies. |
 
 ### Vale — ranger
 
@@ -87,12 +85,10 @@ Role: precise ranged damage, marks, anti-movement.
 
 | Card | Speed | Effect | Purpose |
 | --- | --- | --- | --- |
-| Quickshot | Fast | Deal 2 at range 3. | Finish or interrupt fragile enemies. |
+| Quickshot | Fast | Deal 2 at range 3; no direct Channel or counter cancellation. | Defeat fragile enemies before their actions. |
 | Pinning Arrow | Fast | Deal 1 at range 4 and Root the target this turn. | Answer pursuit and charges. |
-| Backstep Shot | Normal | Deal 2 at range 3, then move 1 tile away from the target. | Fire after a Fast approach and retreat before Normal enemies. |
-| Hunter's Mark | Slow | Mark an enemy; the next hit deals +3. | Trade immediate safety for a stronger follow-up. |
-| Overwatch | Normal | Until turn end, deal 2 to the first enemy that moves within range 4. | Punish predictable movement. |
-| Piercing Line | Slow | Deal 4 through every enemy in a straight line, range 5. | Formation payoff. |
+| Backstep Shot | Normal | Deal 2 at range 3, then move to the farthest empty orthogonal neighboring cell from the target; no empty cell means no move, and the move may approach it. | Fire after a Fast approach and retreat before Normal enemies. |
+| Hunter's Mark | Slow | Range 4. Mark an enemy; next player-source damage gains +3, including traps and Spark primary but excluding chains. Consumed on use; otherwise persists. | Trade immediate safety for a stronger follow-up. |
 
 ### Iona — arcanist
 
@@ -101,9 +97,20 @@ Role: area control, timing manipulation, payoff.
 | Card | Speed | Effect | Purpose |
 | --- | --- | --- | --- |
 | Arc Spark | Slow | Deal 3 at range 3; deal `2 + target Charge` (max 4) to each orthogonally adjacent enemy, then consume Charge if it chained. | Convert enemy healing and formation into area pressure. |
-| Phase Step | Fast | Swap the positions of two allies within range 3. | Rescue/setup without forced enemy movement. |
-| Null Sigil | Fast | Ward an ally; cancel the next hostile status or hazard damage. | Answer control and runes. |
+| Phase Step | Fast | Swap Iona with one other living ally within range 3. | Rescue/setup without forced enemy movement. |
+| Null Sigil | Fast | Ward an ally; prevent the next Exposed application or Detonate hazard damage once; unused Ward persists. | Answer control and runes. |
 | Ember Rune | Normal | Place a rune on an empty cell within range 3. When an enemy enters it during movement, the enemy takes 3 damage, the rune is consumed, and only the remaining steps of that movement event end. | Choose where a pursuing enemy stops without applying Root or cancelling the rest of its action. |
+
+## Future kit proposals — not implemented
+
+The following six cards are proposals only and are absent from the current 12-card deck and the ACT 14b technique index.
+
+| Card | Speed | Proposed effect | Purpose |
+| --- | --- | --- | --- |
+| Hold the Line | Normal | Choose a three-cell line; allies on it gain 3 guard. | Formation payoff. |
+| Cleaving Arc | Slow | Deal 3 to all adjacent enemies. | Reward grouping/setup. |
+| Overwatch | Normal | Until turn end, deal 2 to the first enemy that moves within range 4. | Punish predictable movement. |
+| Piercing Line | Slow | Deal 4 through every enemy in a straight line, range 5. | Formation payoff. |
 | Refract | Normal | Copy the last queued friendly attack at -1 damage, using Iona as the source. | Cross-unit combo payoff. |
 | Starfall | Slow | Deal 3 in a plus-shaped area at range 4. | Area payoff with friendly-fire positioning pressure. |
 
@@ -116,18 +123,18 @@ Enemy actions are deterministic within a short cycle. Target-selection rules are
 Cycle: Stalk -> Pounce -> Recover.
 
 - Stalk (Fast): move 2 toward the nearest ally. If adjacent, deal 2.
-- Pounce (Normal): target the farthest visible ally; charge up to 3 along a highlighted path and deal 4.
-- Recover (Slow): deal 2 to an adjacent ally or move 1; lose all Root immunity.
+- Pounce (Normal): fix the farthest ally at announcement; approach up to 3 through empty cells, then deal 4 if alive and orthogonally adjacent.
+- Recover (Slow): fix the nearest ally; deal 2 only if adjacent at the start, otherwise approach up to 1 without attacking. No healing or immunity change.
 
-Counterplay: Pinning Arrow, Overwatch, Ember Rune, screening with Rook.
+Counterplay: Pinning Arrow, Ember Rune, screening with Rook.
 
 ### Bastion — tests target priority and disruption
 
 Cycle: Cover -> Shield Drive -> Brace.
 
-- Cover (Fast): the lowest-health enemy gains 4 guard; Bastion becomes its interceptor while adjacent.
-- Shield Drive (Normal): move 1 toward the nearest ally and deal 3; the victim becomes Exposed (+1 damage from the next hit).
-- Brace (Slow): gain 6 guard and prepare a 4-damage counter against the first adjacent attacker next turn.
+- Cover (Fast): fix the lowest-current-HP other living enemy (self if none), at unlimited range; add 4 guard even if not adjacent. Interception begins only if adjacent on activation and repeats while alive and adjacent this turn.
+- Shield Drive (Normal): move 1 toward the nearest ally and deal 3; the surviving original target becomes Exposed after damage (+1 next enemy-source damage), even when damage is intercepted. Ward prevents Exposed only.
+- Brace (Slow): gain 6 guard and prepare one 4-damage melee counter. Remaining Guard and unused counter persist until Bastion's next action starts; adjacent ranged attacks do not trigger it.
 
 Counterplay: Pommel Break, ranged attacks, changing targets, Mark into a coordinated burst.
 
@@ -135,11 +142,11 @@ Counterplay: Pommel Break, ranged attacks, changing targets, Mark into a coordin
 
 Cycle: Inscribe -> Detonate -> Drain.
 
-- Inscribe (Fast): mark the target ally's cell and its orthogonal neighbors with visible hostile runes.
-- Detonate (Slow, following turn): each marked cell deals 4; marks then disappear.
-- Drain (Normal): deal 2 at range 4 and heal the most injured enemy for 2. Actual healing adds the same amount of Charge, up to 2, for this turn.
+- Inscribe (Fast): fix the lowest-Guard ally's cell and orthogonal neighbors (tie: lowest current HP; exclude walls/outside). Replace existing runes; no immediate damage, no tracking, no Channel cancellation.
+- Detonate (Slow, following turn): deal 4 hazard damage only to living allies on current runes, then clear all runes. Ward blocks once. A prior Pommel cancels and clears at this event; caster defeat cancels but leaves runes.
+- Drain (Normal): fix the lowest-current-HP living ally at announcement, deal 2 at unlimited range, then select the lowest-current-HP living injured enemy at execution (self allowed), heal up to 2 and add actual healing as Charge (total cap 2). Zero damage still allows healing; a previously dead target cancels everything, while a kill by this hit still permits healing.
 
-Counterplay: Reposition, Phase Step, Null Sigil, Quickshot or Pommel Break to cancel Channel before Detonate.
+Counterplay: Reposition, Phase Step, Null Sigil, Quickshot to defeat the caster and cancel subsequent actions, or Pommel Break to cancel a later Detonate. Quickshot does not directly cancel Channel.
 
 ## Charge and Arc Spark
 
@@ -167,13 +174,23 @@ The first playable slice uses a reduced set of twelve cards while retaining all 
 
 After Shield Drive's approach, both actor and target must still be alive and orthogonally adjacent before its existing 3 damage and follow-up Exposed logic run. An Ember Rune that defeats the moving Bastion therefore prevents both effects. Surviving trap stops retain the adjacent attack; Root, guard, cover redirection, ward consumption and Exposed application to the original target keep their existing order. Both the simulation used by forecast/executeTurn and the retained direct resolver use this boundary.
 
-Drain requires a living attack target before any damage, healing or Charge is resolved. The direct resolver now matches the existing simulation cancellation for an already defeated or absent target. If Drain itself defeats a previously living target, enemy healing and Charge still resolve. Existing dead-actor entry guards remain. These are two prerequisite corrections; the complete effect-description audit remains ACT 14b.
+Drain requires a living attack target before any damage, healing or Charge is resolved. The direct resolver now matches the existing simulation cancellation for an already defeated or absent target. If Drain itself defeats a previously living target, enemy healing and Charge still resolve. Existing dead-actor entry guards remain. These two prerequisite corrections are retained unchanged by ACT 14b.
+
+## Complete effect explanations — ACT 14b
+
+All 9 enemy techniques, 12 current cards and 3 Legacy effects have a display-only short contract and full explanation in `effectCatalog`. Short text contains every independent effect; full text states targeting time, range, conditions, lifetime, consumption and links to related `effectRules`. Resolvers never read this catalogue. The in-game index is reachable before any order or draw through Help; selected/provisional and queued events expose the same rules in the existing timeline detail panel. The enemy reference remains available at queue zero. ALT is documented alongside every technique. Native details controls are siblings of action buttons, not nested interactive buttons, and disclosure state is separate from game state.
+
+Drain visibly and accessibly includes Charge. Its fixed announced attack target differs from its dynamically selected healing recipient. Actual healing of 0/1/2 adds 0/1/2 Charge up to total 2, independently of dealt HP damage. Charge boosts orthogonal Arc Spark chains, is entirely consumed when neighbors were present before the primary hit, and expires at turn end even if unused. Mark is checked on the actual damage recipient and excluded from chained hits. Each hit still passes through existing armor and cover rules.
+
+Rules are separate from plan results. Removed the independent Arc Spark numeric estimate; snapshot differences and existing outcome logs are the only result sources. Counter reductions distinguish logged activation, Pommel clearing, logged action-start expiry, and neutral end when evidence is absent. Existing rune arrays provide same-cell count changes. The six board chips stay fixed; the auxiliary status explanation includes cover targets and counter readiness even with Guard 0. Defeated units remain absent.
+
+Complete text wraps in normal flow at 11px or larger and line-height 1.6. Help scrolls its body while retaining its close button and keyboard focus boundary. The 700px 155px hand and 320px single column remain. Physical 200% zoom and actual screen-reader speech require separate testing; DOM/viewport checks are not substitutes.
 
 ## Local playtest notes — ACT 13
 
 One topbar button opens a native modal dialog: a 420px drawer on desktop and an internally scrolling bottom sheet at 720px and below. The header and save/copy footer are flex siblings of the scroll region, so they remain visible without covering its last item. The trigger remains above the existing briefing/result overlay; the native notes dialog is above both. This permits a note after victory or defeat without restarting. The closed board, ACTION ORDER, and hand retain their ACT 12 geometry, including the 155px hand at 700px and single-column hand at 320px. Card purpose metadata and combat rules are untouched.
 
-`notes.js` owns an editor and an in-memory collection separate from `game`. It stops dialog click/keyboard propagation, uses native modality with explicit Tab boundaries, restores focus to the opening control, and never calls combat rendering, selection, mode, reset, queue, or execution functions. `capturePlaytestScene()` is the only integration point: it returns detached summaries of capture time, the single `GAME_VERSION = "ACT 14a"` constant, turn, phase, selected card/mode/move actor, at most three orders, and the current/selection-before/event-after/final/resolving preview. No deck, complete units, forecast snapshots, cookies, query parameters, or other storage are collected. Opening an existing note preserves its attached scene until explicit refresh; attachment OFF stores `null`.
+`notes.js` owns an editor and an in-memory collection separate from `game`. It stops dialog click/keyboard propagation, uses native modality with explicit Tab boundaries, restores focus to the opening control, and never calls combat rendering, selection, mode, reset, queue, or execution functions. `capturePlaytestScene()` is the only integration point: it returns detached summaries of capture time, the single `GAME_VERSION = "ACT 14b"` constant, turn, phase, selected card/mode/move actor, at most three orders, and the current/selection-before/event-after/final/resolving preview. No deck, complete units, forecast snapshots, cookies, query parameters, or other storage are collected. Opening an existing note preserves its attached scene until explicit refresh; attachment OFF stores `null`.
 
 `notes-core.js` validates schema 1 under `order3.playtestNotes.v1`. UUIDs are assigned on first text input, with a time/random fallback when `crypto.randomUUID` is unavailable. Input debounces for 500ms; explicit save, close, pagehide, and hidden visibility flush pending input. Same-ID edits preserve creation time. Empty text is not saved and does not delete a previous revision. The last saved editor ID is stored alongside notes. Optional v1 fields are retained. Get/set exceptions, malformed data, unknown schema, and malformed records block writes; they never turn the key into an empty list. Counts reflect successfully stored notes, while unsaved drafts remain accessible in this tab and in exports.
 

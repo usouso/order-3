@@ -21,7 +21,7 @@
       </div>
       <div class="topbar-tools">
         <button id="notes-button" class="notes-trigger" aria-haspopup="dialog" aria-controls="notes-dialog" aria-label="感想や改善案のメモを開く。端末保存0件">感想メモ</button>
-        <button class="icon-button" id="help-button" aria-label="遊び方">?</button>
+        <button class="icon-button" id="help-button" aria-label="遊び方・全ての技の説明" aria-haspopup="dialog" aria-controls="modal">?</button>
       </div>
     </header>
 
@@ -53,16 +53,19 @@
               FAST → NORMAL → SLOW　<span>同速度は味方が先</span>
             </p>
           </div>
-          <button id="preview-final" class="preview-final-button">最終予測</button>
+          <button id="preview-final" class="preview-final-button" aria-describedby="forecast-stage-note">最終予測</button>
         </div>
         <div id="action-timeline" class="action-timeline"
              role="group" aria-label="左から順に実行する敵味方の行動順"
              aria-describedby="execution-flow-title speed-order-rule"></div>
         <div id="timeline-detail-panel" class="timeline-detail-panel" hidden></div>
-        <div id="idle-units" class="idle-units"></div>
+        <div class="timeline-footer">
+          <div id="idle-units" class="idle-units"></div>
+          <p id="forecast-stage-note" class="forecast-stage-note">最終予測＝全行動直後（ターン末の解除・ドロー前）</p>
+        </div>
 
         <details class="intent-reference">
-          <summary>敵予告の原文とHP</summary>
+          <summary>敵の効果詳細とHP</summary>
           <div id="intent-list" class="intent-list"></div>
         </details>
       </section>
@@ -116,7 +119,7 @@
     </section>
   </main>
 
-  <div id="modal" class="modal" role="dialog" aria-modal="true">
+  <div id="modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
     <div class="modal-card">
       <p class="eyebrow">FIELD BRIEFING</p>
       <h2 id="modal-title">3枚で、戦況を組み替えろ。</h2>

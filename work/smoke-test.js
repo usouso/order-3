@@ -584,7 +584,7 @@ const tests = `
       "Forward Cut and Backstep Shot should be NORMAL");
     assert(cardDefs.hunters_mark.speed === "slow" && cardDefs.hunters_mark.text.includes("+3"),
       "Hunter's Mark should be SLOW and grant +3");
-    assert(cardDefs.arc_spark.speed === "slow" && cardDefs.arc_spark.text.includes("3ダメージ") && cardDefs.arc_spark.text.includes("2ダメージ"),
+    assert(cardDefs.arc_spark.speed === "slow" && cardDefs.arc_spark.text.includes("3ダメージ") && cardDefs.arc_spark.text.includes("2＋対象の帯電"),
       "Arc Spark should be SLOW with 3/2 damage text");
 
     resetGame();
@@ -866,16 +866,13 @@ const tests = `
     const context = selectionTimelineContext();
     assert(simGetUnit(context.state, "pursuer").charge === 2 && simGetUnit(context.state, "pursuer").marked,
       "Arc Spark selection pre-state should include earlier Drain charge and SLOW Mark");
-    const breakdown = arcSparkBreakdown(context.state, simGetUnit(context.state, "pursuer"));
-    assert(breakdown.includes("本体6（印+3）") && breakdown.includes("隣接2体へ各4（帯電+2）"),
-      "target selection breakdown should show primary, mark, neighbor count, and charge bonus");
     renderControls();
-    assert(el.modeHelp.textContent.includes("本体6") && el.modeHelp.textContent.includes("帯電+2"),
-      "Arc Spark selection UI should display the dynamic breakdown");
+    assert(!el.modeHelp.textContent.includes("本体6") && el.modeHelp.textContent.includes("効果詳細"),
+      "Arc Spark should use canonical rules and snapshot results, without a second damage estimate");
     const chargedToken = renderUnit(simGetUnit(context.state, "pursuer"));
     const chargedChip = chargedToken.children[0].children.find(chip => chip.dataset.status === "charge");
     assert(chargedChip.dataset.status === "charge" && chargedChip.innerHTML.includes("<b>2</b>")
-      && statusMeta.charge.detail(simGetUnit(context.state, "pursuer")).includes("ターン終了"),
+      && statusMeta.charge.detail(simGetUnit(context.state, "pursuer")).includes("ターン末"),
       "board token should show the complete charge value and central metadata should explain its lifetime");
   }
 
@@ -912,9 +909,8 @@ const tests = `
     selectCard(spark.instanceId);
     assert(!el.modeBar.hidden && !el.cancel.hidden, "Arc Spark selection should show mode controls");
     assert(getComputedStyle(el.modeBar).display === "grid", "selected mode bar should have computed grid display");
-    assert(el.modeHelp.textContent.includes("追跡獣") && el.modeHelp.textContent.includes("本体6")
-      && el.modeHelp.textContent.includes("隣接1体") && el.modeHelp.textContent.includes("帯電+2"),
-      "Arc Spark selection should show only its current dynamic breakdown");
+    assert(el.modeHelp.textContent.includes("効果詳細") && !el.modeHelp.textContent.includes("本体6"),
+      "Arc Spark selection should lead to complete rules instead of a second damage calculation");
 
     selectCard(spark.instanceId);
     assertControlsHidden("same-card deselection");
@@ -926,7 +922,7 @@ const tests = `
     selectCard(spark.instanceId);
     selectCard(quickshot.instanceId);
     assert(!el.modeBar.hidden && getComputedStyle(el.modeBar).display === "grid", "switching cards should keep current selection controls visible");
-    assert(el.modeHelp.textContent === "FASTで解決", "new card should replace the previous card's help");
+    assert(el.modeHelp.textContent.startsWith("FASTで解決") && el.modeHelp.textContent.includes("効果詳細"), "new card should replace the previous card's help");
     ["追跡獣", "本体", "隣接", "帯電", "連鎖先なし"].forEach(staleText =>
       assert(!el.modeHelp.textContent.includes(staleText), "switched-card help must remove stale text: " + staleText));
 
@@ -989,10 +985,17 @@ const tests = `
     renderControls();
     assertControlsHidden("battle ended");
 
+    const priorModal = { hidden: el.modal.hidden, title: el.modalTitle.textContent,
+      body: el.modalBody.innerHTML, action: el.modal.dataset.action };
     showHelp();
     assert(!el.modal.hidden && getComputedStyle(el.modal).display === "grid", "existing modal should remain visible when hidden is removed");
     el.modalButton.listeners.click();
-    assert(el.modal.hidden && getComputedStyle(el.modal).display === "none", "existing modal hidden state should compute to display none");
+    assert(el.modal.hidden === priorModal.hidden
+      && getComputedStyle(el.modal).display === (priorModal.hidden ? "none" : "grid"),
+      "Help should restore the previous modal visibility");
+    if (!priorModal.hidden) assert(el.modalTitle.textContent === priorModal.title
+      && el.modalBody.innerHTML === priorModal.body && el.modal.dataset.action === priorModal.action,
+      "Help should preserve the prior briefing/result and its start/restart action");
 
     resetGame();
     game.intents = [];
@@ -1036,7 +1039,7 @@ const tests = `
       "returning to unchanged technique mode should restore the zero-target reason");
 
     selectCard(shield.instanceId);
-    assert(validCells().length === 1 && el.modeHelp.textContent === "FASTで解決",
+    assert(validCells().length === 1 && el.modeHelp.textContent.startsWith("FASTで解決"),
       "switching to a legal card should restore the unchanged normal selection help");
     assert(el.instruction.textContent === "この命令の直前：盾を固めるの対象を選んでください。",
       "a legal card should retain the existing target instruction");
@@ -1116,7 +1119,7 @@ const tests = `
     selectCard(pommel.instanceId);
     assert(validCells().some(cell => cell.x === 2 && cell.y === 4),
       "the post-FAST enemy position should remain a legal provisional target");
-    assert(el.modeHelp.textContent === "NORMALで解決"
+    assert(el.modeHelp.textContent.startsWith("NORMALで解決")
       && el.instruction.textContent === "この命令の直前：柄打ちの対象を選んでください。",
       "a target entering range before the command should keep the existing normal guidance");
     assertNoUnavailableGuidance("post-FAST legal enemy target");
@@ -1243,9 +1246,9 @@ const tests = `
     const protectedContext = selectionTimelineContext();
     assert(simGetUnit(protectedContext.state, "iona").hp === 2 && validCells(protectedContext).some(cell => cell.x === 2 && cell.y === 3),
       "prior FAST guard should keep Iona alive and restore the in-range enemy target");
-    assert(el.modeHelp.textContent.includes("SLOWで解決") && el.modeHelp.textContent.includes("追跡獣")
+    assert(el.modeHelp.textContent.includes("SLOWで解決") && el.modeHelp.textContent.includes("効果詳細")
       && el.instruction.textContent === "この命令の直前：連鎖火花の対象を選んでください。",
-      "survival should restore Arc Spark's existing speed, breakdown, and target prompt");
+      "survival should restore Arc Spark's speed, rule access, and target prompt");
     assertNoActorUnavailableGuidance("protected Arc Spark");
     undoLast();
     selectCard(spark.instanceId);
@@ -1341,7 +1344,7 @@ const tests = `
     assert(el.modeHelp.textContent.includes("実行不能：イオナ"),
       "returning to unchanged technique mode should restore actor-unavailable guidance");
     selectCard(shield.instanceId);
-    assert(validCells().length === 1 && el.modeHelp.textContent === "FASTで解決",
+    assert(validCells().length === 1 && el.modeHelp.textContent.startsWith("FASTで解決"),
       "switching to a legal card should restore its unchanged normal guidance");
     assertNoActorUnavailableGuidance("ACT 07 other card");
     const rook = getUnit("rook");
@@ -1391,7 +1394,7 @@ const tests = `
     assert(cardDefs.ember_rune.speed === "normal" && cardDefs.ember_rune.range === 3
       && cardDefs.ember_rune.target === "empty",
       "ACT 08 must preserve Ember Rune's NORMAL speed, range 3, and empty-cell target");
-    assert(cardDefs.ember_rune.text === "射程3。空きマスに罠を設置。敵が踏むと3ダメージを与え、その移動の残り歩数を失わせる。発動後に消滅。",
+    assert(["射程3", "空きマス", "3ダメージ", "その移動の残りを止め", "罠1個が消滅"].every(part => cardDefs.ember_rune.text.includes(part)),
       "Ember Rune card text should match the decided ACT 08 contract");
     assert(readmeSource.includes("現在解決中の移動イベントの残り歩数を失います")
       && readmeSource.includes("別の後続移動イベントは取り消しません"),
@@ -1994,7 +1997,7 @@ const tests = `
           intentId + " should source target and speed from the existing intent");
         assert(step.innerHTML.includes("<strong>"),
           intentId + " should high-contrast existing numeric or tactical keywords");
-        const referenceCard = el.intents.children.find(card => card.innerHTML.includes(enemyIntent.name));
+        const referenceCard = el.intents.children.find(card => card.innerHTML.includes("｜" + enemyIntent.name + "</span>"));
         assert(referenceCard && referenceCard.innerHTML.includes(enemyIntent.description)
           && referenceCard.innerHTML.includes("HP "),
           intentId + " should remain available with original prose and HP in the intent reference");
@@ -2002,19 +2005,19 @@ const tests = `
     };
 
     verifyIntentTurn(1, {
-      stalk: ["2マス移動", "隣接すれば2ダメージ"],
-      inscribe: ["次ターンに同じ座標を起爆"]
+      stalk: ["最大2マス接近", "隣接すれば2ダメージ"],
+      inscribe: ["予告マス", "次ターンの起爆", "味方へ各4ダメージ"]
     });
     verifyIntentTurn(2, {
-      pounce: ["3マス突進", "隣接すれば4ダメージ"],
+      pounce: ["最大3マス接近", "隣接すれば4ダメージ"],
       shield_drive: ["1マス接近", "3ダメージ", "露出"],
-      detonate: ["全マスに4ダメージ", "柄打ちで詠唱解除可能"]
+      detonate: ["災印上の味方全員", "地形ダメージ4", "柄打ちで取り消せる"]
     }, [{ x: 0, y: 4 }, { x: 1, y: 4 }]);
     assert(!el.timeline.children.find(step => step.innerHTML.includes("飛びかかり")).innerHTML.includes("柄打ち"),
       "Pounce must not invent Detonate's counter text");
     verifyIntentTurn(3, {
-      brace: ["装甲6", "攻撃者へ4ダメージ"],
-      drain: ["2ダメージ", "敵側の負傷者を2回復"]
+      brace: ["装甲+6", "近接反撃4", "1回", "次の自分の行動開始"],
+      drain: ["2ダメージ", "負傷した敵", "HP最少", "最大2回復", "実回復分の帯電", "合計上限2"]
     });
   }
 
@@ -2677,7 +2680,7 @@ const tests = `
     const assertScene = (kind, label) => {
       const before = JSON.stringify(game);
       const scene = capturePlaytestScene();
-      assert(scene.gameVersion === "ACT 14a" && scene.preview.kind === kind, label + ": version and preview kind");
+      assert(scene.gameVersion === "ACT 14b" && scene.preview.kind === kind, label + ": version and preview kind");
       assert(JSON.stringify(Object.keys(scene).sort()) === JSON.stringify(["capturedAt", "gameVersion", "orders", "phase", "preview", "selection", "turn"]), label + ": scene allowlist");
       assert(scene.orders.length <= 3 && !JSON.stringify(scene).includes('"deck"'), label + ": only three order summaries, no deck");
       if (scene.orders[0]) scene.orders[0].actor = "detached summary";

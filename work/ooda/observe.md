@@ -918,3 +918,161 @@ QA自身が`work/act14a-browser-test.js`を実行。元の検査・証拠を変�
 製品、実装テスト、司令塔/設計記録は編集していない。Gitは差分の読取りのみ、Git保存・push・Pages公開は行っていない。QA一時スクリプトと証拠、本observe.mdの追記だけを保存した。検査用Chrome/HTTPサーバーはfinallyで終了、定期監視や反復pollは作成していない。
 
 次工程: 司令塔が合格ハッシュの差分を確認してACT 14aをGit保存・公開し、その後ACT 14bの説明実装へ進める。報告ID`act-14a-qa-01`を一度直接送信し、受付確認後は編集せず終了する。
+
+---
+
+# 2026-09-12 JST — ACT 14b 独立QA
+
+- reportId: `act-14b-qa-01`
+- 担当: 観察・QA / `01a09193-f91c-7ad3-89ff-c2ab8f19966b`
+- 対象: `act-14b-implementation-01`。全コマンドのworkdirは共有repo `C:/Users/nonus/Documents/Codex/2026-09-11/new-chat-2`。
+- 判定: **FAIL — P2が1件（ACT14B-QA-01）。P0/P1なし。** 24件の説明内容と戦闘不変はPASS。勝敗画面のHelpを閉じると再戦導線が消えるため、14b合格・公開へ進めない。
+
+## ACT14B-QA-01 — P2: 勝敗画面からHelpを開くと再戦ボタンが失われる
+
+Chrome、1280×720で勝利・敗北の両方に再現。勝敗状態への入口のみ人工fixture（該当陣営のHPを0にして既存finishBattleを呼ぶ）。その後の操作は実キーボードで、DOM強制clickや直接showHelp呼出しは使っていない。
+
+1. 勝利「もう一度」または敗北「再戦する」のボタンにフォーカスがある状態からTabを3回押す。この環境の経路は `modal-button → BODY → notes-button → help-button`。
+2. EnterでHelpを開く。「全ての技の説明」→「生命吸収」をEnter/Spaceで展開できる。
+3. EscapeでHelpを閉じる。
+4. 結果モーダルは復元されず、再戦ボタンがなくなる。`game.phase === "ended"` のまま、`#modal.hidden === true`、`data-action === "close"`、可視の再戦ボタン0、実行ボタンdisabled。Helpを再度開いて閉じても再戦にならず、ページ再読込が必要。
+
+期待: Helpの説明を読んだ後に元の勝敗画面へ戻り、再戦を選べること。説明開閉で戦闘を勝手に再開したり結果を失ったりしないこと。
+
+原因: `game.js:2671` のshowModalが同じ `#modal` のtitle/body/actionを上書きし、`showHelp:2683` が `restart` を `close` へ置換する。`modal-button` のhandler（2713付近）は元の結果画面/actionを復元せずhiddenにする。HelpだけのTab境界では結果画面から背面HelpへのTab移動を防がない（2727付近）。修正方針は結果画面/actionの保持復帰、または同等の再戦導線維持。実装は行っていない。
+
+**発生時期を分離:** 公開済み14aコミット `de079578ba08c19b0a84beef7574ae871b2569ab` の6製品ファイルをread-only Gitで取得し、別ローカルサーバーで同じ勝利/敗北→Tab→Help→戻るを確認。14aもended/hidden/再戦0となる。したがって14bが新たに作った戦闘回帰とは扱わず、今回明示された初回・勝敗・解決中Helpの受入検査で見つけた既存由来のUI欠落として修正を求める。
+
+証拠: `work/act14b-independent-qa/additional-browser.json`（各phaseの操作前後、focusPath、gameと乱数の不変を記録）、`victory-help.png`、`victory-lost-restart.png`、`defeat-help.png`、`defeat-lost-restart.png`、`baseline-modal.json`。
+
+## 内容24件・6状態・共通規則の独立照合
+
+`contract-review.md` に24件すべてを実際の対象選択／resolver分岐と照合した表を保存。敵9技、カード12枚、遺志3種について数値、対象、射程、速度、独立効果、条件、持続、消費、相互作用の説明不一致は発見しなかった。catalog件数だけの判定ではない。
+
+- Drain: 短文とARIAは2ダメージ・負傷敵の現在HP最少1体を最大2回復・実回復分の帯電合計上限2を保持。攻撃対象は予告時固定、回復先は攻撃後の実行時選定、自身候補、0/1/2、対象HP被害0でも回復、事前死亡なら全取消、自分の攻撃で倒した時は回復継続を全文と処理で確認。帯電は上下左右のSpark連鎖増幅・連鎖先ありで全消費・ターン末消滅。
+- Spark: 本体前に元対象の連鎖先と帯電を確保、致死後も連鎖、斜め/二段先除外、Markは本体だけ、肩代わりで中心は移らない。各ダメージのguard/coverは個別適用。
+- cover: 固定した1人、生存/隣接中は繰返し、離れて中断して同ターン再隣接で復活、guard0でも有効。状態付与/解除は元対象。
+- counter: 近接だけ、被害後の生存/隣接、guard全吸収でも発動、柄打ちは原対象を先に解除、反撃/解除/次行動での終了を結果に区別。現在のログとeventから表示し、別ダメージ計算を導入していない。
+- 移動: 割って入るの経路不成立でも両者guard/射程再判定なし、離脱射撃の空きなし/近づく場合/撃破後移動、位相交換は自分と他の味方、ALTは元技効果なしを確認。
+- 災印: guard優先対象/固定座標/設置置換、起爆は味方だけ・Ward、柄打ち取消時の消去タイミング、術者死亡時の残存。火種: 重ね置き/1進入1個/移動だけ停止/庇護/術者死亡残存。重ね罠の1→2/2→1を既存配列差分から表示。
+- 遺志: 3種FAST/距離無制限、対象死亡取消、登録済み固有技の自動変換なし。通常装甲/Root/cover/Chargeの解除とWard/Mark/Exposed/未発動地形の持越し、最終予測がcleanup前であることを確認。
+
+README/DESIGNは現行12カードと将来6案を区別し、各技の説明を現処理へ同期。ゲーム内から説明へ到達するための代用品にはしていない。
+
+## 戦闘不変と境界検査
+
+- game.js、smoke、14b audit/browser、notes browserの構文チェックPASS。`node work/smoke-test.js` 全スモークPASS（14aの20境界×forecast/通常実行/旧直接経路を含む）。`node work/notes-test.js` PASS。
+- `source-comparison.cjs` で全named functionを実行時function sourceとして14aと比較。**104関数同一、14関数変更、表示関数5追加、Spark独自数値関数2削除**。実装者の35関数ハッシュ列挙へ依存せず、変更関数と周辺宣言/イベントhandlerのdiffを独立読取り。対象、射程、速度、AI、同速度順、効果解決、通常実行、旧直接経路、cleanupに変更なし。
+- proseだけを除いた全カード/3遺志、6状態のactive/order/short等、盤面/速度/owner定数、同じ乱数での初期gameが14aと一致。敵予告も3phase×12入力の36例でdescription以外の対象/速度/cells/channel等が完全一致。
+- 実装者 `act14b-audit.js` を新規QA先へ出力をredirectして再実行、24契約・13群PASS。Drain/Charge/Spark致死・Mark・cover、cover繰返し/距離復帰、counter/pommel、移動例外、災印固定/取消/死亡残存、罠stack、遺志、説明開閉のgame/queue/intents/random不変を確認。
+- 前回独立作成した13境界を `previous-boundaries.cjs` で現14bに再実行。期待版名と証拠先だけ変更し、fixture/期待HP/比較は変更せず、**13件×3経路すべてPASS**。B1の罠致死/生存/Mark/装甲/持続装甲/隣接Root、B2の対象消失/事前死亡/自分の致死後1・2回復/全快0/低HP別敵/既存帯電capを含む。
+
+## ブラウザー・レイアウト・通常プレイ・メモ
+
+新しい隔離Chrome/ローカルHTTPで実装者browser scriptを再実行し、7群PASS。証拠は既存実装者ディレクトリを上書きせず `implementation-browser-rerun/` へ保存した。
+
+| 画面 | 通常の手札上端 | 6イベント時上端 | カード幅 | ページ横幅 |
+| --- | ---: | ---: | ---: | ---: |
+| 1280×720 | 648.94 | 652.11 | 234.80 | 1280 |
+| 700×900 | 864.94 | 879.33 | 155 | 700 |
+| 320×900 | 823.92 | 847.31 | 278、1列 | 320 |
+
+- 閉じた詳細で初期手札の上端が画面内。700は155px横手札、320は1列、文書横overflowなし。1280では6イベントが収まり、狭幅ではイベントfocusで該当項目をスクロール表示。
+- 可視短文/ARIAから独立効果を落とさず、完全説明は11px以上/行高1.5以上、折返しと縦伸長、clamp/ellipsisなし。Helpは本文だけをスクロールして戻るボタンを表示。700の6イベント閉状態、320のHelp全文、1280のDrain規則/予測結果の分離をPNGでも目視した。
+- 未選択/命令0の敵詳細、全12カードの選択詳細、3遺志とALT、対象なし、未ドロー/未予告の全24索引へ到達。Enter/Space/Tab/Shift+Tab/Escape/touch、Helpのfocus境界/戻り、button内に別button/details/summaryなし。登録済みイベント選択と開閉は命令追加を起こさない。
+- guard0のcounter/cover補助説明が、6状態chipを増やさず存在。独自追加試験で生存・隣接するcoverとcounterを同時にtouch表示し、game/乱数不変を確認。HP0駒は表示されない。
+- `additional-browser.cjs` では初期画面から実TabでHelpへ移り、24索引のDrainを開閉してgame/乱数不変を確認。勝敗だけは上記P2。通常解決中のHelpは読み続けられ、ターン2へ進んでも残る。
+- **自然操作と人工fixtureを区別:** 実装者browser rerunの初期ランダム手札3枚ALT→実行に加え、独自browser scriptでも新規ページから3枚ALTをUIだけで登録・実行し、Helpを解決中に開いた。さらに前回独立境界runnerの最後で新規ページの最後のカード1枚をUIでALT実行した。いずれも手札/HP/位置/intents/乱数/待機時間を注入せずTURN 02へ進み、lastResolvedState全体が事前forecast.finalと一致。全境界を自然プレイで起こしたとはしていない。
+- メモはACT13 sceneの本文編集保持、新規/明示更新ACT14b、ID/createdAt保持、コピーと共有body一致、再読込、Help↔native notesのEscape/focus共存を対象限定で確認。独自通常UIターン後のメモにもACT14bが付きgame不変。clipboard/popupは隔離fixtureで置換、実Issue/ログイン/投稿なし。無関係な保存障害スイートは再実行しなかった。
+- browser rerunと独立境界のconsole warning/error、追加browserのpageerrorは0。実装者PASSだけでは覆えなかった勝敗HelpのP2を追加検査で検出した。
+
+## 検査前後のハッシュ
+
+下記9件は開始・終了時とも `act-14b-implementation-01` と一致。
+
+| ファイル | SHA256 |
+| --- | --- |
+| game.js | `0307B2AA3D4AD11CD444987B6804643F2B55D9BCCD4CA29F1190BFEA7FE8493E` |
+| index.html | `A1CB019830795AA8B613150565AE59CBA1C68A40E8C1F16F2BB0CCBB6F2BD26D` |
+| styles.css | `7AAA6CE640992950F7863CCF555D216730A01578E889628880459F433B23E6AF` |
+| README.md | `302C4A5F39B602CAEC52AA4DAA485144ABCA441B2F155029AC64B79F3D5209D0` |
+| DESIGN.md | `B6A49C1B3793459DB7E31A5CE0D342679D021874D05B168D1181DD1A02B04C7F` |
+| smoke-test.js | `0CA0364DB9C296872D56C4AFD6C89DFC013FCCBAFB6E68412143C14C001D2500` |
+| act14b-audit.js | `A8BE46172FEBCB7FA86308859DFF0AB5925224B3A71805530E505DC714755E0A` |
+| act14b-browser-test.js | `D86E478E3D0AB9DA42C7FAA5925F99D790543381FB9BF31672734F7227106F95` |
+| notes-browser-test.js | `5B0EB9C3A6DA9E8A4FD3A75F724A61DF16C185B2E592A6E34EFB4BB64AD88119` |
+
+全独立証拠: `work/act14b-independent-qa/`。`contract-review.md`、`source-comparison.json`、`additional-browser.json`、`baseline-modal.json`、`independent-boundaries-report.json`、`implementation-audit-rerun/audit.json`、`implementation-browser-rerun/report.json`、各PNGと再実行用QA script。
+
+## 限界と引継ぎ
+
+物理200%ズーム、実スクリーンリーダー発話、Safari/iOS、実タッチ端末、GitHub認証/実投稿、人間の理解速度・面白さは未確認。ブラウザーはheadless Chrome。終了状態の再現は明示fixtureであり、自然操作で最後まで勝ち/負けを作ったとは扱わない。
+
+製品・実装テスト・司令塔/設計記録は未編集。Gitは読取りのみ、commit/push/Pages公開なし。新規QA script/証拠と本observe.md追記だけを保存。Chrome/HTTPサーバーはfinallyで終了し、定期監視や反復状態pollを作成していない。
+
+次工程: 司令塔へ `act-14b-qa-01` を一度直接送信し、受付確認後は追加編集せず終了。P2修正後は勝利/敗北のHelp→復帰→再戦、初回/解決中Helpとnotes共存を再QAする。24説明・戦闘不変・3幅の通過結果は、修正差分とハッシュに応じて引き継ぐ。
+
+---
+
+# 2026-09-12 JST — ACT 14b fix 独立再QA
+
+- reportId: `act-14b-qa-02`
+- 担当: 観察・QA / `01a09193-f91c-7ad3-89ff-c2ab8f19966b`
+- 対象: `act-14b-fix-01`、版名ACT 14b。共有repo `C:/Users/nonus/Documents/Codex/2026-09-11/new-chat-2` を全コマンドのworkdirに指定。
+- 判定: **PASS。ACT14B-QA-01（P2）解消。P0/P1/P2なし。** 前回通過した24件説明・戦闘不変・3幅は下記の差分/ハッシュを根拠として引き継ぐ。独立QA合格であり、公開完了ではない。
+
+## 元再現と局所回帰
+
+独自 `work/act14b-independent-qa02/independent-browser.cjs` は5群PASS、console warning/error・pageerror 0。元QAのTab経路とHelp閲覧を同じ実Chrome上で再検査した。実装者テストを実行しただけの判定ではない。
+
+1. **初回/勝利/敗北×Escape/Enter/Spaceの9ケース:** 勝敗への入口だけは陣営HP0＋finishBattleの人工fixture。初回は新規ページそのまま。以後はTabでHelpへ移動しEnter、索引と生命吸収をSpaceで展開、Escapeまたは戻るボタンのEnter/Spaceで閉じる。title/body/button/action/hidden/scrollが元と完全一致し、開始/再戦ボタンへfocus。game JSON・乱数呼出数・予測finalも不変。二重showHelp通知を挟んでも戻り先を失わない。復帰後の明示Enter/SpaceでTURN01/planning/queue0/modal hiddenを確認。初回の明示開始はgameを初期化し直さない。
+2. **実スクロール復帰:** 結果本文を長くした表示専用fixtureでscrollTop=200を設定。Helpを読んで戻ると本文HTML/actionと非0のスクロール位置が復元される。これは自然な結果本文を改稿した製品変更ではなく、復帰機能だけの検査fixture。
+3. **敗北Helpとメモの反復:** 敗北→Help→メモを実入力/保存→Escapeでメモを閉じるとnotes-buttonにfocus、TabでHelpへ戻れる。HelpをEscape/Spaceで閉じると同じ敗北へ復帰しgame/乱数/予測不変。2回反復後の明示再戦でも最後のメモ本文を保持。
+4. **通常UIの3命令ターン:** 新規ページの初期ランダム手札から最後のカードを選び、3枚をALTで登録、通常の作戦実行ボタンを押す。解決中Helpの生命吸収を読み、TURN02でlastResolvedState全体が事前forecast.finalと一致。HelpをSpaceで閉じてもTURN02のgame/乱数/予測は不変。手札/HP/位置/intents/乱数/待機時間を注入していない。
+5. **古い戻り先の失効:** 古い勝利→Help→新しい敗北、および古い敗北→Help→新しい勝利を、native notesあり/なしの4表示fixtureで確認。新しい結果のtitle/restartを保持し、notesのfocusを奪わない。Escapeで結果を消さず、その後のHelp開閉でも古い結果を戻さない。明示Enterで再戦できる。
+
+元の勝利/敗北→Help→閉じるで再戦を失う経路は復元へ変わった。`victory-restored.png`、`defeat-restored.png`を目視し、元の結果本文と可視/フォーカス済みの再戦ボタンを確認した。
+
+## 実装者回帰検査の再実行と全スモーク
+
+`rerun.cjs`で実装者の`work/act14b-fix-browser-test.js`を読取り実行し、証拠先だけ新規QAディレクトリに変更。**13ブラウザ群＋1ソース不変検査の14項目PASS、console warning/error・pageerror 0。** 勝利/敗北×Escape/戻るclick、初回、選択ALTのplanning、反復/二重Help、勝利Help/notes保存/focus/再戦後保持、自然UI1枚ALTターンを確認した。
+
+終局については表示通知fixtureだけでなく、HP/位置/queueを調整した人工戦闘を既存executeTurnで実際に解決する4ケース（勝利/敗北×Helpのみ/Help＋notes）も再実行。Help中に最新の結果が届き、forecast.finalとlastResolvedStateが一致、notes表示中のfocus維持、結果のrestart維持、後のHelp復帰、明示再戦が通った。人工戦闘の入口と自然UIターンは区別し、自然に1戦を勝ち/負け切った検査とはしない。
+
+構文チェック（game.js、smoke-test.js、fixブラウザテスト）、`node work/smoke-test.js`全スモーク、`node work/notes-test.js`はPASS。smokeの修正は「Helpを閉じると常にhidden」から「前の画面の可視性/title/body/actionを復元」へ期待を変えた箇所で、戦闘の期待値は変更していない。Git diff --checkもPASS（改行正規化の警告のみ）。無関係な全保存障害検査や前回の24境界を再実行していない。
+
+QA実行上の補足: 最初のrerun wrapperは別VM realmでテストを実行し、Playwrightが返すobjectとVM内literalのprototype差によりdeepStrictEqualが失敗した（値は同じ）。製品や実装者のassertは変更せず、QA wrapperを通常のNode moduleとして同じrealmで実行する方式へ修正し、全14項目が通った。最初のwrapper失敗は`implementation-rerun/report.json`へ保持、合格結果は`implementation-rerun-valid/report.json`。製品不具合/未解消の検査失敗とは扱わない。
+
+## 変更範囲と前回通過の引継ぎ
+
+game.jsのmodal制御を読取り、保持先は表示用1件（title/body/button/action/scroll/focus）だけでgame/戦闘参照を保存しないこと、Help→復帰ではresetしないこと、二重Helpは上書きしないこと、新しいshowModalで古い戻り先を破棄することを確認。
+
+独立スクリプトでもモーダル外ソースとHelp本文を抽出してSHA256を再計算し、修正前記録と一致した。7製品ファイルもbyte hash一致。したがって、前回の24説明・6状態・共通規則、対象/射程/速度/AI/解決順、1280/700/320の全文/閉状態レイアウト通過を引き継ぐ。今回狭幅を新たにブラウザ検査したとは扱わない。
+
+| 対象 | SHA256 |
+| --- | --- |
+| モーダル外ソース | `95298F5D457F0D4D59C85DE440A9BFEE8A108EE17869347BCD9A370F75A41979` |
+| Help本文/索引markup | `3D27C44799BEA31127BF10F23E5C0C0C1830A14C0B3BB189D3F41F88AB4DE31C` |
+| index.html | `A1CB019830795AA8B613150565AE59CBA1C68A40E8C1F16F2BB0CCBB6F2BD26D` |
+| styles.css | `7AAA6CE640992950F7863CCF555D216730A01578E889628880459F433B23E6AF` |
+| notes.css | `3FAD64B380E75FD11AAD1D5613FD3A5857D29BF17D325BBB836AF780B1040832` |
+| notes.js | `C512F3548E90A9B7B60983C3AE8560C87D0B73548F2DC82A921D7E079E552FFE` |
+| notes-core.js | `E2B5F657D2A8AED3825D65CE9A7C39A3B91059F6934E3064F3753EACAB700336` |
+| README.md | `302C4A5F39B602CAEC52AA4DAA485144ABCA441B2F155029AC64B79F3D5209D0` |
+| DESIGN.md | `B6A49C1B3793459DB7E31A5CE0D342679D021874D05B168D1181DD1A02B04C7F` |
+
+変更3ファイルは開始/終了時とも依頼された修正後ハッシュと一致。
+
+| ファイル | 開始＝終了 SHA256 |
+| --- | --- |
+| game.js | `64686043D365C2E0494856034A4FF629CEC0214034B5C030A4DB23552ACF324A` |
+| smoke-test.js | `55C7E69A3F1D330E61AC7506ECFEFE031DD0A014694027C9F7AC8F8CF05CB476` |
+| act14b-fix-browser-test.js | `795FFEC3AA0D95E657155FC4F43BCB56CE12B3B15FFA1F177E5CC7A7F83E9A50` |
+
+## 証拠・未確認・次工程
+
+新規証拠は`work/act14b-independent-qa02/`。独立の`independent-report.json`に9復帰ケースと4最新結果ケース、scope hash、通常UI予測、5群の結果を保存。`implementation-rerun-valid/report.json`に再実行14項目と終局4ケース、各PNG、2つのQA scriptを保存した。既存証拠を変更していない。
+
+1280×720のheadless Chromeで検査。物理200%ズーム、実スクリーンリーダー音声、Safari/iOS、実タッチ端末、人間の理解速度/面白さ、自然な全戦闘、実GitHubログイン/投稿は未確認。外部通信・Issue投稿・公開なし。Chrome/HTTPサーバーはfinallyで終了。
+
+製品/実装テスト/司令塔・設計記録は未編集、Gitは読取りのみ。新規QA script/証拠と本observe追記だけを保存。次工程は司令塔が合格ハッシュのACT14bを通常のGit保存・公開へ進めること。`act-14b-qa-02`を一度直接報告し、受付後は追加編集や返答待ちをせず終了する。定期確認/反復poll/自己通知なし。

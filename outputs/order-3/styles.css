@@ -486,6 +486,28 @@ h2 { margin: 3px 0 0; font-size: 17px; letter-spacing: .04em; }
 .timeline-target { color: #e1cba9; font-size: 8px; font-weight: 800; line-height: 1.3; overflow-wrap: anywhere; }
 .timeline-effects { display: grid; gap: 2px; color: #c5ced7; font-size: 8px; line-height: 1.3; }
 .timeline-effects span { display: block; }
+.timeline-effects { overflow-wrap: anywhere; }
+.timeline-detail-hint { color: var(--cyan); font-size: 8px; line-height: 1.4; }
+.card-detail-hint { margin-top: 6px; color: var(--cyan); font-size: 10px; line-height: 1.5; }
+.forecast-stage-note { margin: 4px 0 0; color: var(--muted); font-size: 9px; line-height: 1.4; }
+.timeline-footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0 8px; }
+.effect-details, .rule-detail, .outcome-logs { min-width: 0; margin-top: 8px; overflow-wrap: anywhere; }
+.effect-details > summary, .rule-detail > summary, .outcome-logs > summary, .help-section > summary {
+  padding: 5px 2px; color: var(--cyan); cursor: pointer; font-size: 11px; line-height: 1.5;
+}
+.effect-details summary:focus-visible, .rule-detail summary:focus-visible, .help-section summary:focus-visible,
+.outcome-logs summary:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
+.effect-rules { padding: 3px 0 4px; }
+.effect-rules h4, .prediction-title { margin: 7px 0 4px; color: var(--ink); font-size: 11px; line-height: 1.5; }
+.effect-rules p, .intent-card .effect-rules p, .rule-detail p, .outcome-logs p {
+  margin: 6px 0; color: #c5ced7; font-size: 11px; line-height: 1.6;
+}
+.related-rules { padding: 2px 8px 5px; border-left: 2px solid var(--cyan-dim); }
+.related-rules .rule-detail { margin-top: 2px; }
+.help-section { margin-top: 10px; border-top: 1px solid var(--line); }
+.help-section > summary { font-size: 12px; font-weight: 800; }
+.technique-index h3 { margin: 12px 0 4px; font-size: 12px; }
+.board-status-popover .status-popover-item p { font-size: 11px; line-height: 1.6; }
 .timeline-effects strong { color: #fff; font-weight: 900; }
 .timeline-result { margin-top: auto; color: #c3ccd5; font-size: 8px; font-weight: 700; line-height: 1.3; overflow-wrap: anywhere; }
 .timeline-result.predicted { padding-top: 3px; border-top: 1px solid rgba(255,255,255,.08); color: var(--amber); }
@@ -611,7 +633,7 @@ h2 { margin: 3px 0 0; font-size: 17px; letter-spacing: .04em; }
 .card-category b { overflow: visible; font-size: 9px; text-overflow: clip; }
 .card h3 { margin: 7px 0 6px; font-size: 14px; }
 .card p { margin: 0; color: #aeb7c2; font-size: 10px; line-height: 1.55; }
-.card-bottom { display: flex; justify-content: space-between; align-items: end; margin-top: auto; padding-top: 10px; }
+.card-bottom { display: flex; flex-wrap: wrap; gap: 6px; justify-content: space-between; align-items: end; margin-top: auto; padding-top: 10px; }
 .card-move { color: var(--muted); font-size: 8px; white-space: nowrap; }
 .card-move.active-use-mode {
   display: inline-flex;
@@ -650,9 +672,10 @@ h2 { margin: 3px 0 0; font-size: 17px; letter-spacing: .04em; }
   backdrop-filter: blur(8px);
 }
 .modal[hidden] { display: none; }
-.modal-card { width: min(460px, 100%); padding: 30px; border: 1px solid rgba(78,214,200,.35); background: #0d1720; box-shadow: 0 25px 100px rgba(0,0,0,.6); }
+.modal-card { width: min(460px, 100%); max-height: calc(100dvh - 40px); display: flex; flex-direction: column; padding: 30px; border: 1px solid rgba(78,214,200,.35); background: #0d1720; box-shadow: 0 25px 100px rgba(0,0,0,.6); }
 .modal-card h2 { margin: 7px 0 22px; font-size: 25px; }
-.modal-body { margin-bottom: 22px; color: #adb7c1; font-size: 12px; line-height: 1.65; }
+.modal-body { min-height: 0; overflow-y: auto; overscroll-behavior: contain; margin-bottom: 22px; color: #adb7c1; font-size: 12px; line-height: 1.65; }
+.modal-card > .eyebrow, .modal-card > h2, .modal-card > button { flex-shrink: 0; }
 .brief-step { display: grid; grid-template-columns: 28px 1fr; gap: 9px; align-items: center; margin: 9px 0; }
 .brief-step b { display: grid; place-items: center; width: 25px; height: 25px; border: 1px solid var(--cyan-dim); border-radius: 50%; color: var(--cyan); }
 .modal-body > p { margin: 17px 0 0; color: var(--amber); }
