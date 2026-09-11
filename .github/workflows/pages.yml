@@ -2,7 +2,7 @@ name: Deploy ORDER//3 to GitHub Pages
 
 on:
   push:
-    branches: [main]
+    branches: [source]
     paths:
       - outputs/order-3/**
       - .github/workflows/pages.yml
