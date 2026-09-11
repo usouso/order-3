@@ -2574,13 +2574,110 @@ const tests = `
       "purpose labels should retain primary/secondary hierarchy, 9px text, readable move origins, and existing 155px/one-column/forced-colors layouts");
   }
 
+  // ACT 14a: dead actors/targets stop effects at the same boundary in all three paths.
+  {
+    const runEnemyBoundary = async (label, setup, check) => {
+      setup();
+      const before = JSON.stringify(game);
+      const forecast = predictTimeline();
+      assert(JSON.stringify(game) === before, label + ": forecast is nonmutating");
+      const enemyStep = forecast.snapshots[forecast.snapshots.length - 1];
+      check(enemyStep.state, enemyStep.outcome, "forecast");
+      await executeTurn();
+      assert(comparableState(game.lastResolvedState) === comparableState(forecast.final), label + ": normal execution matches forecast before turn cleanup");
+      check(game.lastResolvedState, enemyStep.outcome, "executeTurn");
+      setup();
+      for (const event of buildResolutionEvents()) {
+        if (event.kind === "player") await resolvePlayerAction(event.payload);
+        else await resolveEnemyIntent(event.payload);
+      }
+      const direct = cloneCombatState(game);
+      check(direct, null, "legacy direct");
+      assert(comparableState(direct) === comparableState(forecast.final), label + ": legacy direct resolution matches forecast");
+    };
+    const setupBoundary = (enemyId, actionId) => {
+      resetGame();
+      // A harmless real command makes executeTurn available without changing either test target.
+      game.queue = [queued("null_sigil", "iona", "iona")];
+      game.intents = [intent(getUnit(enemyId), actionId, "boundary fixture", "normal", getUnit("rook"), "fixture")];
+    };
+    for (const sample of [
+      { name: "lethal trap", hp: 3, expectedActor: 0, expectedTarget: 11, exposed: false },
+      { name: "survives trap", hp: 4, expectedActor: 1, expectedTarget: 8, exposed: true },
+      { name: "lethal trap preserves target defenses", hp: 3, targetGuard: 2, targetWard: true, targetExposed: true, expectedActor: 0, expectedTarget: 11, exposed: true, guard: 2, ward: true },
+      { name: "surviving attack consumes ward only for Exposed", hp: 4, targetWard: true, expectedActor: 1, expectedTarget: 8, exposed: false },
+      { name: "surviving attack consumes old Exposed before reapplying", hp: 4, targetExposed: true, expectedActor: 1, expectedTarget: 7, exposed: true },
+      { name: "surviving attack consumes armor before HP", hp: 4, targetGuard: 2, expectedActor: 1, expectedTarget: 10, exposed: true },
+      { name: "killed target receives no Exposed and keeps ward", hp: 4, targetHp: 3, targetWard: true, expectedActor: 1, expectedTarget: 0, exposed: false, ward: true },
+      { name: "Root prevents approach", hp: 4, rooted: true, expectedActor: 4, expectedTarget: 11, exposed: false, noMove: true },
+      { name: "surviving but nonadjacent stop", hp: 4, targetX: 3, expectedActor: 1, expectedTarget: 11, exposed: false },
+      { name: "actor already dead", hp: 0, expectedActor: 0, expectedTarget: 11, exposed: false, noMove: true, cancelled: "行動者が戦闘不能" },
+      { name: "target already dead", hp: 4, targetHp: 0, expectedActor: 4, expectedTarget: 0, exposed: false, noMove: true, cancelled: "対象が戦闘不能" }
+    ]) {
+      await runEnemyBoundary("B1 " + sample.name, () => {
+        setupBoundary("bastion", "shield_drive");
+        Object.assign(getUnit("bastion"), { hp: sample.hp, x: 0, y: 0, rooted: Boolean(sample.rooted) });
+        Object.assign(getUnit("rook"), { hp: sample.targetHp ?? 11, x: sample.targetX ?? 2, y: 0,
+          guard: sample.targetGuard || 0, ward: Boolean(sample.targetWard), exposed: Boolean(sample.targetExposed) });
+        game.emberRunes = [{ x: 1, y: 0 }];
+      }, (state, outcome, path) => {
+        const actor = simGetUnit(state, "bastion"), target = simGetUnit(state, "rook");
+        const label = "B1 " + sample.name + " / " + path;
+        assert(actor.hp === sample.expectedActor && actor.x === (sample.noMove ? 0 : 1), label + ": actor HP and position");
+        assert(target.hp === sample.expectedTarget && target.exposed === sample.exposed, label + ": target damage and Exposed");
+        assert(target.guard === (sample.guard || 0) && target.ward === Boolean(sample.ward), label + ": target guard and ward ordering");
+        assert(state.emberRunes.length === (sample.noMove ? 1 : 0), label + ": only entered trap is consumed");
+        if (outcome && sample.cancelled) assert(outcome.status === "cancelled" && outcome.reason === sample.cancelled, label + ": existing entry cancellation");
+      });
+    }
+    for (const ward of [false, true]) {
+      await runEnemyBoundary("B1 cover redirects damage, original target ward=" + ward, () => {
+        setupBoundary("bastion", "shield_drive");
+        Object.assign(getUnit("bastion"), { hp: 4, x: 0, y: 0 });
+        Object.assign(getUnit("vale"), { x: 2, y: 0, ward });
+        Object.assign(getUnit("rook"), { x: 2, y: 1, guard: 2, coveringId: "vale" });
+        game.intents[0].targetId = "vale";
+        game.emberRunes = [{ x: 1, y: 0 }];
+      }, (state, outcome, path) => {
+        const rook = simGetUnit(state, "rook"), vale = simGetUnit(state, "vale");
+        assert(rook.hp === 10 && rook.guard === 0 && !rook.exposed, "B1 cover / " + path + ": defender takes 3, including guard");
+        assert(vale.hp === 8 && vale.exposed === !ward && !vale.ward, "B1 cover / " + path + ": Exposed and ward affect original target only");
+      });
+    }
+    for (const sample of [
+      { name: "target already dead", targetHp: 0, cantorHp: 6, hpAfter: 6, chargeAfter: 0 },
+      { name: "target absent", missing: true, targetHp: 11, cantorHp: 6, hpAfter: 6, chargeAfter: 0 },
+      { name: "target killed by Drain", targetHp: 1, cantorHp: 6, hpAfter: 7, chargeAfter: 1 },
+      { name: "two HP target killed, two actual healing", targetHp: 2, cantorHp: 5, hpAfter: 7, chargeAfter: 2 },
+      { name: "target survives and Charge caps at two", targetHp: 3, cantorHp: 6, charge: 2, hpAfter: 7, chargeAfter: 2 },
+      { name: "armor absorbs hit but healing remains", targetHp: 11, guard: 2, cantorHp: 6, hpAfter: 7, chargeAfter: 1 },
+      { name: "dead actor cannot heal another enemy", targetHp: 11, cantorHp: 0, hpAfter: 0, chargeAfter: 0, deadActor: true }
+    ]) {
+      await runEnemyBoundary("B2 " + sample.name, () => {
+        setupBoundary("cantor", "drain");
+        Object.assign(getUnit("rook"), { hp: sample.targetHp, guard: sample.guard || 0 });
+        Object.assign(getUnit("cantor"), { hp: sample.cantorHp, charge: sample.charge || 0 });
+        if (sample.missing) game.intents[0].targetId = null;
+        if (sample.deadActor) getUnit("pursuer").hp = 6;
+      }, (state, outcome, path) => {
+        const cantor = simGetUnit(state, "cantor"), target = simGetUnit(state, "rook");
+        const cancelled = sample.targetHp === 0 || sample.missing || sample.deadActor;
+        const expectedDamage = cancelled ? 0 : Math.max(0, 2 - (sample.guard || 0));
+        assert(cantor.hp === sample.hpAfter && cantor.charge === sample.chargeAfter, "B2 " + sample.name + " / " + path + ": actual healing and Charge");
+        assert(target.hp === Math.max(0, sample.targetHp - expectedDamage), "B2 " + sample.name + " / " + path + ": target damage");
+        if (sample.deadActor) assert(simGetUnit(state, "pursuer").hp === 6 && simGetUnit(state, "pursuer").charge === 0, "B2 dead actor cannot heal or charge a different injured enemy");
+        if (outcome && cancelled) assert(outcome.status === "cancelled", "B2 " + sample.name + ": whole action cancelled");
+      });
+    }
+  }
+
   // ACT 13: the opt-in scene is a detached allowlist, never a combat save.
   {
     resetGame();
     const assertScene = (kind, label) => {
       const before = JSON.stringify(game);
       const scene = capturePlaytestScene();
-      assert(scene.gameVersion === "ACT 13" && scene.preview.kind === kind, label + ": version and preview kind");
+      assert(scene.gameVersion === "ACT 14a" && scene.preview.kind === kind, label + ": version and preview kind");
       assert(JSON.stringify(Object.keys(scene).sort()) === JSON.stringify(["capturedAt", "gameVersion", "orders", "phase", "preview", "selection", "turn"]), label + ": scene allowlist");
       assert(scene.orders.length <= 3 && !JSON.stringify(scene).includes('"deck"'), label + ": only three order summaries, no deck");
       if (scene.orders[0]) scene.orders[0].actor = "detached summary";

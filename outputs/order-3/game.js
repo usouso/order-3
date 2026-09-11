@@ -1,5 +1,5 @@
 const SIZE = 6;
-const GAME_VERSION = "ACT 13";
+const GAME_VERSION = "ACT 14a";
 const SPEED_ORDER = { fast: 0, normal: 1, slow: 2 };
 const SPEED_LABEL = { fast: "FAST", normal: "NORMAL", slow: "SLOW" };
 const WALLS = [{ x: 2, y: 2 }, { x: 3, y: 3 }];
@@ -1088,7 +1088,7 @@ function resolveSimEnemy(state, event, outcome) {
     case "shield_drive":
       if (!target || target.hp <= 0) return cancelOutcome(outcome, "対象が戦闘不能");
       simMoveToward(state, actor, target, 1, outcome);
-      if (isOrthogonallyAdjacent(actor, target)) {
+      if (actor.hp > 0 && target.hp > 0 && isOrthogonallyAdjacent(actor, target)) {
         simDealDamage(state, target.id, 3, actor.id, { hostile: true, melee: true }, outcome);
         if (target.hp > 0 && !simConsumeWard(target, "露出", outcome)) target.exposed = true;
       }
@@ -1626,7 +1626,7 @@ async function resolveEnemyIntent(enemyIntent) {
     case "shield_drive":
       if (!target || target.hp <= 0) return;
       await moveToward(actor, target, 1);
-      if (isOrthogonallyAdjacent(actor, target)) {
+      if (actor.hp > 0 && target.hp > 0 && isOrthogonallyAdjacent(actor, target)) {
         await dealDamage(target, 3, actor, { hostile: true, melee: true });
         if (target.hp > 0 && !consumeWard(target, "露出")) {
           target.exposed = true;
@@ -1662,7 +1662,8 @@ async function resolveEnemyIntent(enemyIntent) {
       break;
     }
     case "drain": {
-      if (target && target.hp > 0) await dealDamage(target, 2, actor, { hostile: true });
+      if (!target || target.hp <= 0) return;
+      await dealDamage(target, 2, actor, { hostile: true });
       const injured = living("enemy").filter(unit => unit.hp < unit.maxHp).sort((a, b) => a.hp - b.hp)[0];
       if (injured) {
         const healed = Math.min(2, injured.maxHp - injured.hp);

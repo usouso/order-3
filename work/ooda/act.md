@@ -736,3 +736,62 @@ Validated SHA256:
 ## Remaining scope
 
 This correction has not received independent re-QA and is not published. Real GitHub authenticated form submission, physical 200% zoom, screen-reader speech, Safari/iOS, private-mode behavior, actual disk/storage exhaustion and human usability remain unmeasured as previously recorded. The popup/write interleaving test is an explicit injected timing fixture; it is distinct from the real two-tab before/after tests. Intentional content edits retain notified last-edit-wins behavior; collaborative text merging/history is outside ACT 13. Next step is independent re-QA of ACT13-QA-01 and the existing ACT 13 guarantees.
+
+---
+
+# ACT 14a — stop follow-up effects at defeat boundaries
+
+Report: `act-14a-implementation-01`.
+Implementer: `01a09194-239a-70f2-822a-8e42325d794d` / local (Astra).
+Base: coordinator-confirmed published ACT 13, commit `8bfe830fc8e7ddf763dae3725350ad9129b013d8`, Pages run `34638150539` success. Current work location remains `C:/Users/nonus/Documents/Codex/2026-09-11/new-chat-2`.
+Status: implementation and implementer checks PASS; independent `act-14a-qa-01` remains required before publication.
+
+## Changes
+
+- B1: Added post-movement actor and target survival checks to Shield Drive in `resolveSimEnemy` and the retained `resolveEnemyIntent`. The existing adjacent 3-damage and Exposed block runs only when both are alive. A Bastion killed by the entered trap cannot perform that block. A surviving adjacent Bastion still attacks. No damage value, movement stop, target selection, Root, guard, ward, cover redirection, or original-target Exposed ordering changed.
+- B2: Changed the retained direct Drain path to return before damage/healing/Charge when its original attack target is absent or already defeated. This matches the unchanged simulation used by prediction and normal `executeTurn`. If Drain's own hit defeats a previously living target, healing/Charge still resolve. Existing dead-actor entry guards are unchanged.
+- Changed only the display version constant to `ACT 14a`. README/DESIGN describe these narrow defeat conditions and the new capture version. ACT 14b's full effect-description work is deferred as instructed. No resolver refactor, enemy AI, card classification, note UI, HTML or CSS change.
+- Added twenty boundary cases to the existing full smoke suite, checking all three paths, and added a scoped browser script. Historical ACT 13 note scenes remain unchanged on ordinary editing; a new capture or explicit scene refresh records ACT 14a.
+
+Changed files: `outputs/order-3/game.js`, `outputs/order-3/README.md`, `outputs/order-3/DESIGN.md`, `work/smoke-test.js`, new `work/act14a-browser-test.js`, and this `work/ooda/act.md` section. Generated test evidence is under `work/act14a-browser/`. Coordinator/QA/design records and unknown changes were not edited. No Git or publication command was run.
+
+## Automated verification
+
+The added B1 lethal-trap assertion failed on the unmodified resolver (`B1 lethal trap / forecast: target damage and Exposed`), establishing that it detects the reported defect. After the three condition changes:
+
+```text
+node --check outputs/order-3/game.js
+node --check work/smoke-test.js
+node --check work/act14a-browser-test.js
+node work/smoke-test.js
+ORDER//3 smoke tests passed
+node work/act14a-browser-test.js
+ORDER//3 ACT 14a browser tests passed
+```
+
+Twenty added cases each compare prediction, normal executeTurn's pre-cleanup `lastResolvedState`, and the retained direct player/enemy resolver sequence. They also assert that prediction does not mutate live state. A real, harmless self-targeted Null Sigil command makes executeTurn available without changing the enemy's test target.
+
+- B1, thirteen cases: exact HP3 Bastion at screen (1,1), Rook at (3,1), trap at (2,1); HP4 survival; lethal trap preserving pre-existing target guard/ward/Exposed; surviving hit with ward, existing Exposed, or guard; target killed by the hit; rooted actor; surviving nonadjacent stop; actor/target already defeated; cover redirection with and without ward on the original target.
+- HP3 becomes HP0 at the entered trap, with Rook HP11 and Exposed false. HP4 becomes HP1 and attacks for 3, leaving Rook HP8 and Exposed true. Root leaves the trap untriggered. Cover cases redirect damage into Rook's guard/HP while Exposed/ward processing still applies to the original target Vale.
+- B2, seven cases: target already HP0 with Cantor HP6/7; absent target; live target HP1 killed with one actual healing/Charge; live HP2 killed with two actual healing/Charge; target survives with existing Charge already capped; armor absorbs the hit while healing remains; dead caster with a different injured enemy that must not heal.
+- Existing ACT 01–13 smoke coverage remains active. The note scene allowlist test now expects ACT 14a. Unrelated ACT 13 storage-failure/competition browser suites were not rerun because note code did not change.
+
+## Browser observations and evidence
+
+Installed Chrome, headless, isolated context, local HTTP, viewport 1280×900. `work/act14a-browser/report.json` reports PASS, all three groups, zero console warnings/errors. Screenshots for the lethal-trap forecast, survival result, and Drain-kill forecast were visually inspected.
+
+1. Four explicitly artificial fixtures exercise B1 HP3/HP4 and B2 already-dead/killed-by-this-hit. The complete predicted final state equals normal execution's pre-cleanup result. HP0 Bastion/Rook unit DOM is absent in prediction and after execution. B2's dead target cancels the whole action and leaves Cantor HP6/Charge0; its own killing hit yields Cantor HP7/Charge1 in the event snapshot. Charge then clears normally at turn cleanup. Evidence: `b1-lethal-trap-*`, `b1-survives-trap-*`, `b2-dead-target-*`, `b2-target-killed-by-hit-*` forecast/executed PNGs and fixture data in report.json.
+2. Separately, one ordinary opening turn uses only UI controls with the normal randomized hand, initial units and enemy intentions: select a card, convert it to universal movement, select a living ally and legal destination, execute. TURN 02 is reached and the full result matches its prediction. No HP, positions, deck, hand or enemy intentions are injected for this ordinary turn. Evidence: `ordinary-turn-2.png` and the separate ordinaryPlay report entry. This is one automated normal-play turn, not a complete human playthrough or proof of natural encounter frequency for B1/B2.
+3. Focused note regression seeds an explicitly old ACT 13 scene in the isolated browser, reloads and edits text without silently changing its scene/version, creates a new ACT 14a note, explicitly refreshes the old scene to ACT 14a while preserving ID/createdAt, and checks copy equals the encoded share body. Both include ACT 14a after refresh; reload restores it. Game state is identical around note operations. Clipboard/popup are stubbed for this version check; no external request or test Issue is made.
+
+The browser script closes its context/browser/server in its completion path. The evidence folder creation initially hit EPERM despite the requested narrow path grant; the authorized browser-test command then completed through normal require_escalated review. No permission or authentication control was bypassed, and no monitor/regular check was created.
+
+Validated SHA256:
+
+- game.js: `90F1DA7F1CBC036FB1B7CC7E3C997410F19707DFF37344CDD8A1D1DD18D45BAC`
+- smoke-test.js: `5FA488344E184729B81DB5C925DC9D5123C44DB202248E1720C65F48CBC3E010`
+- act14a-browser-test.js: `03FAE4A788708F154AB06D8F40F108FC715160076B88922CFE8D68E44F1306C6`
+
+## Limits and next step
+
+Independent ACT 14a QA and publication are pending. B1/B2 edge cases were observed in artificial browser fixtures and tested in all three resolution paths; the ordinary turn does not establish their frequency during natural play. No new narrow-layout, physical 200% zoom, screen-reader, Safari/iOS, GitHub authentication/submission, or full ACT 13 failure pass is claimed. UI layout and note implementation are unchanged. The user-reported note opening issue was resolved by browser refresh according to the coordinator; this task did not add a note/index fix. Next step is independent `act-14a-qa-01`, then coordinator-owned Git/publication. ACT 14b remains a subsequent task.

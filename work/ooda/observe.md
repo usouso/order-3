@@ -843,3 +843,78 @@ TURN 01〜03を通常操作で進め、TURN 03の生命吸収、息を整える�
 製品・既存テスト・Git・公開・decision/COORDINATION/stateは未変更。ACT 14は混ぜていない。再開後の書込みは新規QA一時JS1件、独立証拠、本observe.mdに限定し、限定された書込み権限で実施した。検査用Chrome/コンテキストと一時HTTPサーバーは各検査のfinallyで終了し、定期確認や常駐プロセスを作成していない。
 
 次工程: 司令塔がこのハッシュと差分を確認し、Git保存・公開工程へ進める。QA担当は公開していない。完了報告は`act-13-qa-02`として既定の新司令塔へ一度送り、返答を待たず終了する。
+
+---
+
+# OBSERVE / ACT 14a — 戦闘不能後の効果停止・独立QA
+
+実施: 2026-09-12 JST。reportId: `act-14a-qa-01`。
+担当: 観察・独立QA / `01a09193-f91c-7ad3-89ff-c2ab8f19966b`（Astra）。
+対象: `C:/Users/nonus/Documents/Codex/2026-09-11/new-chat-2` の未公開ACT 14a、実装報告`act-14a-implementation-01`。
+基準: COORDINATION.md、decision.mdのACT 14a/14b。ACT 14bの全効果説明は別工程であり、本判定に含めない。
+
+## 総合判定: PASS — P0/P1/P2なし
+
+B1の接近中に罠で城壁兵が倒れた場合は後続ダメージと露出が止まり、生存して隣接した場合は従来の攻撃が残る。B2の事前死亡/対象不在は旧直接経路も全不発になり、その攻撃で生存対象を倒した場合は実回復量に応じた回復・帯電を維持した。予測、通常executeTurn、旧直接解決の不一致は検査範囲で見つからなかった。
+
+読取り専用git diffで、game.jsの製品変更は版名と3条件だけであることを確認した。index.html、styles.css、notes.js、notes-core.js、notes.cssの差分はなかった。全効果の説明修正を14aで完了したとは扱わない。
+
+## 全スモークと独立の追加境界
+
+- game.js、smoke-test.js、act14a-browser-test.jsのnode --check成功。全スモークは`ORDER//3 smoke tests passed`。追加済み20ケース×3経路と既存ACT 01–13回帰を含む。
+- 独自の`work/act14a-independent-qa/boundaries.cjs`も構文成功。実Chromeで別の13ケースを作り、それぞれpredictTimeline、通常executeTurnのcleanup前lastResolvedState、旧resolvePlayerAction/resolveEnemyIntent順序を実行した。タイマーのpauseは置き換えていない。
+- 全13ケースで事前に定めたHP/状態/罠消費を照合し、3経路の完全なcloneCombatStateがdeepEqual。予測前後のlive game JSONも同一。console warning/errorとpageerrorは0。
+- 人工fixtureのexecuteTurnを開始可能にするため、対象への干渉がないイオナ自身への無効印1命令を置いた。これは自然到達した盤面ではない。
+
+| 独立人工fixture | 3経路で確認した結果 |
+| --- | --- |
+| B1 HP3、画面(1,1)城壁兵→(2,1)罠→(3,1)Rook | 城壁兵HP0、Rook HP11、露出false、踏んだ罠だけを消費 |
+| B1 HP4の同じ配置 | 城壁兵HP1、Rook HP8、露出true |
+| B1 HP4＋城壁兵に印 | 罠のダメージ加算で城壁兵HP0、印消費、Rook HP11/露出false |
+| B1 HP2＋通常装甲2 | 罠を装甲で一部吸収し城壁兵HP1、装甲0、Rook HP8/露出true |
+| B1 HP3＋前ターンの反撃姿勢/装甲6 | 行動開始時に持続装甲と反撃が終了し、罠でHP0。Rook HP11/露出false |
+| B1 root＋既に上下左右隣接 | 移動しないが攻撃は行う。城壁兵HP4、Rook HP8/露出true、未進入の罠は残る |
+| B2 存在しないtargetId | 攻撃/回復/帯電なし。詠唱師HP6、帯電0、Rook HP11 |
+| B2 Rook事前HP0＋別の負傷敵HP3 | 全不発。詠唱師HP6/帯電0、別の負傷敵HP3/帯電0 |
+| B2 生存Rook HP1を攻撃で撃破、詠唱師HP6 | Rook HP0、詠唱師HP7、実回復1/帯電1 |
+| B2 生存Rook HP2を攻撃で撃破、詠唱師HP5 | Rook HP0、詠唱師HP7、実回復2/帯電2 |
+| B2 敵全員HP満タンで生存Rook HP2を撃破 | 攻撃は成立、回復0・帯電追加0 |
+| B2 詠唱師HP6より低い別敵HP3あり | Rook HP9、別敵HP5/帯電2、詠唱師HP6/帯電0 |
+| B2 詠唱師HP5/既存帯電1 | 実回復2でHP7、帯電は合計2に制限、Rook HP9 |
+
+全スモーク側では上記に加え、rootで接近できず非隣接、罠後も非隣接、行動者/対象事前死亡、既存露出の消費後再付与、対象結界の消費、対象装甲吸収、攻撃で対象死亡時の結界保持、肩代わりと元対象への露出/結界処理、Drainの対象null/装甲でHP被害0/死亡詠唱師の境界が成功した。
+
+## 実ブラウザの表示と通常UI
+
+QA自身が`work/act14a-browser-test.js`を実行。元の検査・証拠を変更せず、`work/act14a-independent-qa/runner.cjs`で証拠出力先だけを置換した。人工fixture4件、通常UI、版メモの3グループがPASS、console warning/errorとpageerrorは0。
+
+- 人工fixtureのB1 HP3/HP4、B2事前死亡/その攻撃で撃破は予測と通常実行結果が一致。HP0の城壁兵/Rookの盤面DOMが予測と実行後の双方で存在しないことを確認。
+- `b1-lethal-trap-forecast.png`を目視し、城壁兵撃破、罠消滅、Rook HP11と後続攻撃なしを確認。`b1-survives-trap-executed.png`では城壁兵HP1、Rook HP8/露出を確認。`b2-target-killed-by-hit-forecast.png`ではRook撃破と詠唱師回復1/帯電1を確認。帯電はturn cleanupで従来どおり消える。
+- 人工stateを注入しない通常UIの1ターンを上記検査で実行し、初期のランダム手札から万能移動を登録してTURN 02へ進むことと予測一致を確認した。
+- 独自検査でも別のfresh pageを開き、既定の初期配置/HP/手札/敵予告のまま手札末尾→移動変換→生存味方→合法マス→作戦実行をUI操作した。TURN 02へ到達し予測と完全一致。その後メモを開いて保存/閉じる操作をし、game JSON不変を確認。`independent-ordinary-turn.png`を目視。
+- 上記は自動操作の通常ターン2回であり、実際のプレイヤーの完走、B1/B2が自然に起こる頻度、面白さの実証ではない。
+
+## 関連する版・メモ回帰
+
+隔離ブラウザへACT 13場面の既存形式メモをseedし、本文のみの編集で元のACT 13場面が変わらないことを確認。新規メモと明示的な場面更新ではACT 14aとなり、旧メモのID/createdAtは保持。コピー全文と共有URL bodyが一致し、再読込もACT 14aを復元した。前後でgame JSON不変。
+
+版確認時のclipboard/popupはテスト用に置換し、外部投稿していない。独自の通常UIターン後の新規メモでもACT 14aを確認。notes実装は無差分のため、無関係な全保存障害/複数タブ試験は再実行していない。以前の「ボタン無反応」はユーザーの更新で解消したとの司令塔記録を引継ぎ、今回の製品修正で直したとは扱わない。
+
+## 検査時ハッシュと証拠
+
+依頼された3ハッシュは検査開始/終了時とも報告と一致した。
+
+- game.js: `90F1DA7F1CBC036FB1B7CC7E3C997410F19707DFF37344CDD8A1D1DD18D45BAC`
+- smoke-test.js: `5FA488344E184729B81DB5C925DC9D5123C44DB202248E1720C65F48CBC3E010`
+- act14a-browser-test.js: `03FAE4A788708F154AB06D8F40F108FC715160076B88922CFE8D68E44F1306C6`
+- 独立QA boundaries.cjs: `60E6219E29E639EC60EDB67AD76CB72A35DA9C317F9DC5B12FF20F4E0E848AE8`
+
+証拠は`work/act14a-independent-qa/`のみへ新規保存。`independent-boundaries-report.json`に13人工fixtureの3経路結果と独立通常UI結果、`implementation-rerun/report.json`に4人工fixture・通常UI・メモ結果、各PNGを保存した。実装者の`work/act14a-browser/`を上書きしていない。
+
+## 未確認・次工程
+
+1280×900のChromeを検査。新たな狭幅レイアウト、物理200%ズーム、スクリーンリーダー音声、Safari/iOS、GitHub認証/実投稿、実ストレージ枯渇は今回未確認。ACT 14bの全効果説明はまだ未実装・未検査。機能QA合格を人間の理解速度や面白さの合格としない。
+
+製品、実装テスト、司令塔/設計記録は編集していない。Gitは差分の読取りのみ、Git保存・push・Pages公開は行っていない。QA一時スクリプトと証拠、本observe.mdの追記だけを保存した。検査用Chrome/HTTPサーバーはfinallyで終了、定期監視や反復pollは作成していない。
+
+次工程: 司令塔が合格ハッシュの差分を確認してACT 14aをGit保存・公開し、その後ACT 14bの説明実装へ進める。報告ID`act-14a-qa-01`を一度直接送信し、受付確認後は編集せず終了する。
