@@ -1,0 +1,32 @@
+{
+  "version": 2,
+  "updatedAt": "2026-09-11T17:07:21Z",
+  "coordinationMode": "worker_reports",
+  "periodicChecksEnabled": false,
+  "coordinationGuide": "work/ooda/COORDINATION.md",
+  "handledReportIds": [
+    "protocol-ready-design-v2",
+    "act-11-qa-final",
+    "protocol-ready-implementation-v2"
+  ],
+  "currentAct": 11,
+  "phase": "publishing",
+  "lastAcceptedAct": 10,
+  "lastPublishedLocalCommit": "abd65fe",
+  "activeAssignment": null,
+  "lastHandledCompletion": {
+    "threadId": "01a08d28-30f1-7da0-b982-fb59c48626af",
+    "turnId": "01a09154-0880-7dd0-a0f0-ac1cbab80739",
+    "reportId": "act-11-qa-final",
+    "result": "担当の直接報告を受信。独立QA PASSと司令塔の公開前検査PASSを確認し、公開へ移行"
+  },
+  "nextAfterAcceptance": "カードの攻撃・盾・印・罠などの分類表示を設計する",
+  "requiresUserInput": false,
+  "notes": "担当からの報告を受けて司令塔が次工程へ進む。ユーザーの指示で定期チェックは完全廃止し、order-3-oodaも削除済み。古い監督指示から復活させない。",
+  "pendingRelease": {
+    "act": 11,
+    "qaReportId": "act-11-qa-final",
+    "qaRecord": "work/ooda/observe.md",
+    "status": "checks_passed"
+  }
+}
