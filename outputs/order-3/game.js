@@ -7,62 +7,62 @@ const cardDefs = {
   forward_cut: {
     ownerId: "rook", name: "踏み込み斬り", speed: "normal",
     text: "上下左右へ1マス接近後、上下左右に隣接する敵へ3ダメージ。",
-    target: "enemy", range: 2
+    target: "enemy", range: 2, categories: ["attack", "mobility"]
   },
   interpose: {
     ownerId: "rook", name: "割って入る", speed: "fast",
     text: "味方へ最大2マス接近し、両者に装甲2。",
-    target: "allyOther", range: 2
+    target: "allyOther", range: 2, categories: ["defense", "mobility"]
   },
   shield_lock: {
     ownerId: "rook", name: "盾を固める", speed: "fast",
     text: "自身に装甲5。隣接する味方への次の攻撃を肩代わり。",
-    target: "self", range: 0
+    target: "self", range: 0, categories: ["defense"]
   },
   pommel_break: {
     ownerId: "rook", name: "柄打ち", speed: "normal",
     text: "隣接する敵に2ダメージ。装甲と、このターンに予告された詠唱を解除。",
-    target: "enemy", range: 1
+    target: "enemy", range: 1, categories: ["control", "attack"]
   },
   quickshot: {
     ownerId: "vale", name: "速射", speed: "fast",
     text: "射程3。敵に2ダメージ。",
-    target: "enemy", range: 3
+    target: "enemy", range: 3, categories: ["attack"]
   },
   pinning_arrow: {
     ownerId: "vale", name: "縫い留め", speed: "fast",
     text: "射程4。1ダメージを与え、このターンの移動を封じる。",
-    target: "enemy", range: 4
+    target: "enemy", range: 4, categories: ["control", "attack"]
   },
   backstep_shot: {
     ownerId: "vale", name: "離脱射撃", speed: "normal",
     text: "射程3。2ダメージ後、対象から離れる方向へ1マス移動。",
-    target: "enemy", range: 3
+    target: "enemy", range: 3, categories: ["attack", "mobility"]
   },
   hunters_mark: {
     ownerId: "vale", name: "狩人の印", speed: "slow",
     text: "射程4。次に受ける攻撃のダメージを+3。",
-    target: "enemy", range: 4
+    target: "enemy", range: 4, categories: ["control"], categoryDetail: "印"
   },
   arc_spark: {
     ownerId: "iona", name: "連鎖火花", speed: "slow",
     text: "射程3。対象に3ダメージ。上下左右に隣接する敵へ2ダメージ。対象が帯電していれば、その値だけ隣接ダメージ増加（最大+2）。連鎖時に帯電を消費。",
-    target: "enemy", range: 3
+    target: "enemy", range: 3, categories: ["attack"]
   },
   phase_step: {
     ownerId: "iona", name: "位相交換", speed: "fast",
     text: "射程3。自身と味方1人の位置を交換。",
-    target: "allyOther", range: 3
+    target: "allyOther", range: 3, categories: ["mobility"]
   },
   null_sigil: {
     ownerId: "iona", name: "無効印", speed: "fast",
     text: "射程3。味方に結界。次の状態異常か地形ダメージを無効化。",
-    target: "ally", range: 3
+    target: "ally", range: 3, categories: ["defense"]
   },
   ember_rune: {
     ownerId: "iona", name: "火種の罠", speed: "normal",
     text: "射程3。空きマスに罠を設置。敵が踏むと3ダメージを与え、その移動の残り歩数を失わせる。発動後に消滅。",
-    target: "empty", range: 3
+    target: "empty", range: 3, categories: ["trap", "control"]
   }
 };
 
@@ -70,6 +70,14 @@ const ownerMeta = {
   rook: { name: "ルーク", role: "前衛", color: "#55d6c8" },
   vale: { name: "ヴェイル", role: "射手", color: "#74a7ff" },
   iona: { name: "イオナ", role: "術師", color: "#a891ff" }
+};
+
+const cardCategoryMeta = {
+  attack: { label: "攻撃", icon: "blade" },
+  defense: { label: "防御", icon: "shield" },
+  mobility: { label: "機動", icon: "arrows" },
+  control: { label: "妨害", icon: "knot" },
+  trap: { label: "罠", icon: "floor-diamond" }
 };
 
 const statusMeta = {
@@ -475,9 +483,9 @@ function setMode(mode) {
 }
 
 function getLegacy(ownerId) {
-  if (ownerId === "rook") return { name: "遺志：守護", text: "生存中の味方1人に装甲2。", target: "ally", speed: "fast" };
-  if (ownerId === "vale") return { name: "遺志：照準", text: "敵1体に狩人の印。", target: "enemy", speed: "fast", range: 99 };
-  return { name: "遺志：残響", text: "生存中の味方1人に結界。", target: "ally", speed: "fast" };
+  if (ownerId === "rook") return { name: "遺志：守護", text: "生存中の味方1人に装甲2。", target: "ally", speed: "fast", categories: ["defense"] };
+  if (ownerId === "vale") return { name: "遺志：照準", text: "敵1体に狩人の印。", target: "enemy", speed: "fast", range: 99, categories: ["control"], categoryDetail: "印" };
+  return { name: "遺志：残響", text: "生存中の味方1人に結界。", target: "ally", speed: "fast", categories: ["defense"] };
 }
 
 function provisionalActionForSelection() {
@@ -2050,6 +2058,57 @@ function renderUnit(unit, projected = false, actual = unit, statuses = activeSta
   return token;
 }
 
+function categoryIconSvg(categoryKey) {
+  const icon = cardCategoryMeta[categoryKey]?.icon;
+  const paths = {
+    blade: '<path d="M3 13 11.5 4.5 15 3l-1.5 3.5L5 15H3v-2Z" fill="currentColor"/><path d="m3.5 12.5 2 2" stroke="currentColor" stroke-width="1.5"/>',
+    shield: '<path d="M9 2.5 15 5v4.2c0 3.4-2.1 5.6-6 7.3-3.9-1.7-6-3.9-6-7.3V5l6-2.5Z" fill="currentColor"/><path d="M9 5v8" stroke="Canvas" stroke-width="1.2" opacity=".72"/>',
+    arrows: '<path d="M2.5 6h11m-3-3 3 3-3 3M15.5 12h-11m3 3-3-3 3-3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>',
+    knot: '<rect x="2.5" y="3" width="13" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="m6 7 6 4M12 7l-6 4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><circle cx="9" cy="9" r="1.5" fill="currentColor"/>',
+    "floor-diamond": '<path d="M9 2.5 16 9l-7 6.5L2 9l7-6.5Z" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="9" cy="9" r="2" fill="currentColor"/>'
+  };
+  return `<svg class="category-icon icon-${icon}" viewBox="0 0 18 18" aria-hidden="true" focusable="false">${paths[icon] || ""}</svg>`;
+}
+
+function cardCategoryLabel(shown, categoryKey) {
+  const label = cardCategoryMeta[categoryKey]?.label || categoryKey;
+  return shown.categoryDetail && categoryKey === "control"
+    ? `${label}：${shown.categoryDetail}`
+    : label;
+}
+
+function cardCategorySummary(shown) {
+  const labels = shown.categories.map(key => cardCategoryLabel(shown, key));
+  return [`主用途 ${labels[0]}`, labels[1] ? `副用途 ${labels[1]}` : ""].filter(Boolean).join("、");
+}
+
+function renderCardCategories(shown, moveMode) {
+  return `
+    <span class="card-category-block${moveMode ? " move-origin" : ""}" aria-hidden="true">
+      ${moveMode ? '<span class="category-context">元の用途</span>' : ""}
+      <span class="card-categories">
+        ${shown.categories.map((key, index) => `
+          <span class="card-category ${index === 0 ? "primary" : "secondary"} category-${key}">
+            ${categoryIconSvg(key)}
+            <span class="category-role">${index === 0 ? "主" : "＋"}</span>
+            <b>${cardCategoryLabel(shown, key)}</b>
+          </span>
+        `).join("")}
+      </span>
+    </span>
+  `;
+}
+
+function cardAriaLabel(def, shown, isLegacy, selected, moveMode) {
+  const ownerName = ownerMeta[def.ownerId].name;
+  const legacyText = isLegacy ? "遺志。" : "";
+  const categoryText = cardCategorySummary(shown);
+  const modeText = moveMode
+    ? `移動命令として選択中。元の用途は${categoryText}。`
+    : selected ? `${isLegacy ? "遺志" : "技法"}として選択中。${categoryText}。` : `${categoryText}。`;
+  return `${ownerName}、${shown.name}。${legacyText}${modeText}${SPEED_LABEL[shown.speed]}。${shown.text} ALTで味方を1マス移動。`;
+}
+
 function renderHand() {
   el.hand.innerHTML = "";
   if (!game.hand.length) {
@@ -2061,17 +2120,21 @@ function renderHand() {
     const owner = getUnit(def.ownerId);
     const isLegacy = !owner || owner.hp <= 0;
     const shown = isLegacy ? getLegacy(def.ownerId) : def;
+    const selected = game.selectedInstanceId === instance.instanceId;
+    const moveMode = selected && game.mode === "move";
     const button = document.createElement("button");
     button.type = "button";
-    button.className = `card${game.selectedInstanceId === instance.instanceId ? " selected" : ""}`;
+    button.className = `card${selected ? " selected" : ""}${moveMode ? " move-mode" : ""}${isLegacy ? " legacy" : ""}`;
     button.style.setProperty("--owner-color", ownerMeta[def.ownerId].color);
     button.disabled = game.phase !== "planning" || game.queue.length >= 3;
+    button.setAttribute("aria-label", cardAriaLabel(def, shown, isLegacy, selected, moveMode));
     button.innerHTML = `
       <span class="card-owner">${ownerMeta[def.ownerId].name} / ${ownerMeta[def.ownerId].role}</span>
+      ${renderCardCategories(shown, moveMode)}
       <h3>${shown.name}</h3>
       <p>${shown.text}</p>
       <div class="card-bottom">
-        <span class="card-move">ALT：味方を1マス移動</span>
+        <span class="card-move${moveMode ? " active-use-mode" : ""}">${moveMode ? `${categoryIconSvg("mobility")}<b>使用中：移動命令</b>` : "ALT：味方を1マス移動"}</span>
         ${isLegacy ? `<span class="legacy-tag">LEGACY</span>` : `<span class="speed ${shown.speed}">${SPEED_LABEL[shown.speed]}</span>`}
       </div>
     `;

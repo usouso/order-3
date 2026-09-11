@@ -2349,6 +2349,231 @@ const tests = `
       "forced-colors should retain the ward outline and non-color status shapes");
   }
 
+  {
+    const expectedCategories = {
+      forward_cut: ["attack", "mobility"],
+      interpose: ["defense", "mobility"],
+      shield_lock: ["defense"],
+      pommel_break: ["control", "attack"],
+      quickshot: ["attack"],
+      pinning_arrow: ["control", "attack"],
+      backstep_shot: ["attack", "mobility"],
+      hunters_mark: ["control"],
+      arc_spark: ["attack"],
+      phase_step: ["mobility"],
+      null_sigil: ["defense"],
+      ember_rune: ["trap", "control"]
+    };
+    const categoryKeys = ["attack", "defense", "mobility", "control", "trap"];
+    assert(Object.keys(cardCategoryMeta).join(",") === categoryKeys.join(",")
+      && new Set(Object.values(cardCategoryMeta).map(meta => meta.label)).size === 5
+      && new Set(Object.values(cardCategoryMeta).map(meta => meta.icon)).size === 5,
+      "ACT 12 should expose exactly five uniquely named and shaped card purposes");
+    categoryKeys.forEach(key => assert(categoryIconSvg(key).includes("<svg")
+      && categoryIconSvg(key).includes("icon-" + cardCategoryMeta[key].icon)
+      && categoryIconSvg(key).includes("aria-hidden=\\\"true\\\""),
+      "each purpose should have one decorative non-emoji SVG shape: " + key));
+    assert(Object.keys(cardDefs).length === 12,
+      "ACT 12 should classify the current twelve cards without adding cards");
+    Object.entries(expectedCategories).forEach(([cardId, categories]) => {
+      const actual = cardDefs[cardId].categories;
+      assert(JSON.stringify(actual) === JSON.stringify(categories)
+        && actual.length >= 1 && actual.length <= 2
+        && new Set(actual).size === actual.length
+        && actual.every(key => categoryKeys.includes(key)),
+        "each current card should have its decided primary and optional secondary purpose: " + cardId);
+    });
+    assert(cardDefs.hunters_mark.categoryDetail === "印"
+      && !Object.values(cardDefs).some(def => def.categoryDetail && def !== cardDefs.hunters_mark),
+      "Hunter's Mark alone should specialize Control as 妨害：印 without adding a sixth purpose");
+
+    resetGame();
+    game.intents = [];
+    game.hand = Object.keys(cardDefs).map(cardId => makeCardInstance(cardId));
+    const beforeRender = JSON.stringify({
+      units: game.units, hand: game.hand, deck: game.deck, discard: game.discard,
+      queue: game.queue, intents: game.intents, hostileRunes: game.hostileRunes,
+      emberRunes: game.emberRunes, forecast: game.activeForecast
+    });
+    renderHand();
+    const afterRender = JSON.stringify({
+      units: game.units, hand: game.hand, deck: game.deck, discard: game.discard,
+      queue: game.queue, intents: game.intents, hostileRunes: game.hostileRunes,
+      emberRunes: game.emberRunes, forecast: game.activeForecast
+    });
+    assert(beforeRender === afterRender && el.hand.children.length === 12,
+      "rendering purpose labels should not reorder cards or mutate game and forecast state");
+
+    game.hand.forEach((instance, index) => {
+      const def = cardDefs[instance.cardId];
+      const button = el.hand.children[index];
+      const labels = def.categories.map(key => cardCategoryLabel(def, key));
+      const categoryCount = button.innerHTML.split('class="card-category ').length - 1;
+      assert(categoryCount === labels.length && categoryCount <= 2
+        && button.innerHTML.includes(ownerMeta[def.ownerId].name + " / " + ownerMeta[def.ownerId].role)
+        && button.innerHTML.includes("<h3>" + def.name + "</h3>")
+        && button.innerHTML.includes(def.text)
+        && button.innerHTML.includes("ALT：味方を1マス移動")
+        && button.innerHTML.includes(SPEED_LABEL[def.speed])
+        && !button.innerHTML.includes("使用中：移動命令"),
+        "a normal card should retain owner, name, complete text, one-cell ALT, speed, and at most two purposes: " + instance.cardId);
+      labels.forEach((label, labelIndex) => assert(button.innerHTML.includes(">" + (labelIndex ? "＋" : "主") + "</span>")
+        && button.innerHTML.includes("<b>" + label + "</b>"),
+        "primary and secondary visual hierarchy should retain the complete Japanese purpose: " + instance.cardId));
+      const aria = button.getAttribute("aria-label");
+      const ariaParts = [ownerMeta[def.ownerId].name, def.name, "主用途 " + labels[0]];
+      if (labels[1]) ariaParts.push("副用途 " + labels[1]);
+      ariaParts.push(SPEED_LABEL[def.speed], def.text, "ALTで味方を1マス移動");
+      let previous = -1;
+      ariaParts.forEach(part => {
+        const position = aria.indexOf(part);
+        assert(position > previous, "card aria should preserve visible information order for " + instance.cardId + ": " + part);
+        previous = position;
+      });
+      assert(!button.innerHTML.includes("<button"),
+        "purpose labels should not add a nested button or focus stop");
+    });
+    const markButton = el.hand.children[Object.keys(cardDefs).indexOf("hunters_mark")];
+    const runeButton = el.hand.children[Object.keys(cardDefs).indexOf("ember_rune")];
+    assert(markButton.innerHTML.includes("妨害：印")
+      && markButton.innerHTML.split('class="card-category ').length - 1 === 1
+      && !markButton.innerHTML.includes("category-attack"),
+      "Hunter's Mark should be one 妨害：印 purpose rather than Attack or a sixth category");
+    assert(runeButton.innerHTML.includes("category-trap") && runeButton.innerHTML.includes("＋</span>")
+      && runeButton.innerHTML.includes("<b>妨害</b>") && !runeButton.innerHTML.includes("category-attack"),
+      "Ember Rune should read 罠＋妨害 without inventing Attack from its delayed damage");
+  }
+
+  {
+    const shownCard = () => el.hand.children[0];
+    resetGame();
+    game.intents = [];
+    const shot = makeCardInstance("quickshot");
+    game.hand = [shot];
+    game.queue = [];
+    selectCard(shot.instanceId);
+    assert(shownCard().className.includes("selected")
+      && !shownCard().className.includes("move-mode")
+      && shownCard().getAttribute("aria-label").includes("技法として選択中")
+      && shownCard().innerHTML.includes("<b>攻撃</b>"),
+      "selecting a technique should keep its printed purpose and identify the technique mode");
+    setMode("move");
+    assert(shownCard().className.includes("move-mode")
+      && shownCard().innerHTML.includes("使用中：移動命令")
+      && shownCard().innerHTML.includes("元の用途")
+      && shownCard().innerHTML.includes("<b>攻撃</b>")
+      && !shownCard().innerHTML.includes("ALT：味方を1マス移動")
+      && shownCard().getAttribute("aria-label").includes("移動命令として選択中")
+      && shownCard().getAttribute("aria-label").includes("元の用途は主用途 攻撃")
+      && shownCard().getAttribute("aria-label").includes("ALTで味方を1マス移動"),
+      "move mode should be explicit while the readable printed purpose remains labeled as the origin");
+    setMode("technique");
+    assert(!shownCard().className.includes("move-mode")
+      && !shownCard().innerHTML.includes("使用中：移動命令")
+      && !shownCard().innerHTML.includes("元の用途")
+      && shownCard().innerHTML.includes("ALT：味方を1マス移動"),
+      "returning to technique mode should clear every stale move-use marker");
+    selectCard(shot.instanceId);
+    assert(!shownCard().className.includes("selected")
+      && !shownCard().getAttribute("aria-label").includes("選択中"),
+      "deselecting should clear the selected use mode from visual and accessible text");
+
+    resetGame();
+    game.intents = [];
+    const first = makeCardInstance("forward_cut");
+    const second = makeCardInstance("null_sigil");
+    game.hand = [first, second];
+    selectCard(first.instanceId);
+    setMode("move");
+    selectCard(second.instanceId);
+    assert(!el.hand.children[0].className.includes("move-mode")
+      && !el.hand.children[0].innerHTML.includes("使用中：移動命令")
+      && el.hand.children[1].className.includes("selected")
+      && !el.hand.children[1].className.includes("move-mode")
+      && el.hand.children[1].getAttribute("aria-label").includes("技法として選択中"),
+      "switching cards should clear move mode from the old card and select the new technique only");
+
+    resetGame();
+    game.intents = [];
+    const pursuer = getUnit("pursuer");
+    pursuer.x = 2; pursuer.y = 4;
+    const confirmed = makeCardInstance("quickshot");
+    game.hand = [confirmed];
+    game.queue = [];
+    selectCard(confirmed.instanceId);
+    handleCellClick(2, 4);
+    assert(game.queue.length === 1 && game.selectedInstanceId === null && game.mode === "technique"
+      && el.hand.children.length === 0,
+      "target confirmation should preserve the existing queue transition with no stale purpose control");
+    undoLast();
+    assert(game.queue.length === 0 && el.hand.children.length === 1
+      && !shownCard().className.includes("move-mode")
+      && shownCard().innerHTML.includes("ALT：味方を1マス移動")
+      && shownCard().innerHTML.includes("<b>攻撃</b>"),
+      "one undo should restore the normal card purpose and ALT without stale move state");
+  }
+
+  {
+    const ownerCases = [
+      { ownerId: "rook", name: "遺志：守護", category: "防御", categoryKey: "defense" },
+      { ownerId: "vale", name: "遺志：照準", category: "妨害：印", categoryKey: "control" },
+      { ownerId: "iona", name: "遺志：残響", category: "防御", categoryKey: "defense" }
+    ];
+    ownerCases.forEach(testCase => {
+      resetGame();
+      game.intents = [];
+      getUnit(testCase.ownerId).hp = 0;
+      const legacyCards = Object.keys(cardDefs)
+        .filter(cardId => cardDefs[cardId].ownerId === testCase.ownerId)
+        .map(cardId => makeCardInstance(cardId));
+      game.hand = legacyCards;
+      game.queue = [];
+      renderHand();
+      assert(el.hand.children.length === 4, "each defeated owner fixture should retain all four current hand instances");
+      el.hand.children.forEach(button => assert(button.className.includes("legacy")
+          && button.innerHTML.includes("<h3>" + testCase.name + "</h3>")
+          && button.innerHTML.includes("LEGACY")
+          && button.innerHTML.includes("<b>" + testCase.category + "</b>")
+          && button.innerHTML.includes("category-" + testCase.categoryKey)
+          && button.innerHTML.split('class="card-category ').length - 1 === 1
+          && ["attack", "defense", "mobility", "control", "trap"]
+            .filter(key => key !== testCase.categoryKey)
+            .every(key => !button.innerHTML.includes("category-" + key))
+          && button.getAttribute("aria-label").includes("遺志")
+          && button.getAttribute("aria-label").includes("主用途 " + testCase.category)
+          && button.getAttribute("aria-label").includes("FAST")
+          && button.getAttribute("aria-label").includes("ALTで味方を1マス移動"),
+        "all four cards of a defeated owner should show only the current Legacy purpose and preserve Legacy/FAST/ALT meaning: " + testCase.ownerId));
+      selectCard(legacyCards[0].instanceId);
+      setMode("move");
+      const button = el.hand.children[0];
+      assert(button.className.includes("move-mode")
+        && button.innerHTML.includes("使用中：移動命令")
+        && button.innerHTML.includes("元の用途")
+        && button.innerHTML.includes("<b>" + testCase.category + "</b>")
+        && button.innerHTML.includes("category-" + testCase.categoryKey)
+        && button.getAttribute("aria-label").includes("移動命令として選択中")
+        && button.getAttribute("aria-label").includes("元の用途は主用途 " + testCase.category),
+        "Legacy move conversion should separate the active move command from the current Legacy purpose: " + testCase.ownerId);
+    });
+  }
+
+  {
+    assert(styleSource.includes(".card-category.primary")
+      && styleSource.includes(".card-category.secondary")
+      && styleSource.includes("font-size: 9px")
+      && styleSource.includes(".card-category.secondary {\\n  border-style: dashed")
+      && !styleSource.includes(".card.move-mode .card-categories { opacity")
+      && styleSource.includes(".card { flex: 0 0 155px; }")
+      && styleSource.includes("grid-template-columns: minmax(0, 1fr)")
+      && styleSource.includes("@media (forced-colors: active)")
+      && readmeSource.includes("攻撃・防御・機動・妨害・罠")
+      && readmeSource.includes("ALT：味方を1マス移動")
+      && designSource.includes("## Card purpose language")
+      && designSource.includes("| Ember Rune | Trap | Control |"),
+      "purpose labels should retain primary/secondary hierarchy, 9px text, readable move origins, and existing 155px/one-column/forced-colors layouts");
+  }
+
   process.stdout.write("ORDER//3 smoke tests passed\\n");
 })().catch(error => { console.error(error); process.exitCode = 1; });
 `;

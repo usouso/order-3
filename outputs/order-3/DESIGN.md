@@ -45,6 +45,27 @@ Every card has a printed technique and a fallback order:
 
 This turns weak draws into positional choices without requiring a separate movement phase.
 
+## Card purpose language
+
+Every visible hand card carries one primary purpose and, only when tactically useful, one secondary purpose. The five display-only keys are Attack, Defense, Mobility, Control, and Trap. They are shown between owner and card name with a distinct monochrome SVG shape plus complete Japanese text. Primary purpose uses a filled heavy border; secondary purpose uses `＋` and a dashed outline. Purpose labels never drive resolution, targeting, range, speed, forecast, enemy AI, sorting, or the universal move rule.
+
+| Printed card | Primary | Secondary |
+| --- | --- | --- |
+| Forward Cut | Attack | Mobility |
+| Interpose | Defense | Mobility |
+| Shield Lock | Defense | — |
+| Pommel Break | Control | Attack |
+| Quickshot | Attack | — |
+| Pinning Arrow | Control | Attack |
+| Backstep Shot | Attack | Mobility |
+| Hunter's Mark | Control: Mark | — |
+| Arc Spark | Attack | — |
+| Phase Step | Mobility | — |
+| Null Sigil | Defense | — |
+| Ember Rune | Trap | Control |
+
+The universal `ALT：味方を1マス移動` remains a separate fallback and does not make every card a Mobility card. When the selected card is switched to move mode, `使用中：移動命令` replaces the visual ALT line and the card's current printed or Legacy purposes remain readable under `元の用途`; returning to technique, switching cards, confirming, or undoing clears stale mode markers. Legacy effects replace the original classification: Rook's Guard and Iona's Echo are Defense, while Vale's Aim is `Control: Mark`. The existing LEGACY tag remains a separate information axis. Explicit card ARIA labels include owner, displayed name, Legacy/use mode when applicable, primary/secondary purpose, speed, full rules text, and the one-tile allied ALT.
+
 ## Player kits
 
 ### Rook — vanguard

@@ -546,3 +546,56 @@ A local headless Chrome pass with all six statuses on one enemy and Guard/Ward/E
 - The six-state artificial fixture is intentionally dense at a 33px unit size. Geometry and information preservation pass, but perceived recognition speed on a physical phone remains a playtest question.
 - The explanation region expands the document only while open. This protects the closed ACT 10 layout, but opening a six-status explanation on a phone pushes the action order and hand downward by design.
 - Browser automation validates ARIA attributes and keyboard focus behavior, but no separate screen-reader voice pass was performed.
+
+---
+
+# ACT 12 — card purpose language
+
+## Implemented
+
+- Added the five display-only purpose definitions `attack / defense / mobility / control / trap`, with the complete Japanese labels `攻撃 / 防御 / 機動 / 妨害 / 罠` and five unique SVG shape identifiers. The generated shapes are a blade, shield, bidirectional arrows, stop-frame/knot, and floor diamond with a center point; they use `currentColor`, contain no emoji, and are hidden from accessibility APIs.
+- Added the decided primary and optional secondary purpose arrays to all twelve current card definitions: Forward Cut `攻撃＋機動`, Interpose `防御＋機動`, Shield Lock `防御`, Pommel Break `妨害＋攻撃`, Quickshot `攻撃`, Pinning Arrow `妨害＋攻撃`, Backstep Shot `攻撃＋機動`, Hunter's Mark `妨害：印`, Arc Spark `攻撃`, Phase Step `機動`, Null Sigil `防御`, and Ember Rune `罠＋妨害`. Hunter's Mark's `印` remains detail within Control rather than a sixth category.
+- Extended each displayed Legacy definition from the same `getLegacy()` result used for its current name, text, target, and speed. Rook's `遺志：守護` and Iona's `遺志：残響` show only Defense; Vale's `遺志：照準` shows only `妨害：印`. No original card purpose remains beside a Legacy effect.
+- Inserted one non-interactive purpose row between owner and card name. Primary purpose has a filled heavy solid border and visible `主`; secondary purpose has a transparent dashed border and visible `＋`. Both retain complete Japanese text at 9px or larger and use card-only classes rather than ACT 11 status-chip classes.
+- Kept the existing owner-colored top edge, owner/role, card name, complete rules text, normal speed badge or existing LEGACY badge, and `ALT：味方を1マス移動`. Classification does not replace or abbreviate the one-tile distance.
+- When the selected card enters move mode, only that card replaces its visual ALT line with a high-contrast arrow plus `使用中：移動命令`. Its current printed or Legacy purposes remain fully readable inside a separate `元の用途` frame at opacity 1. Returning to technique, selecting another card, deselecting, target confirmation, and one undo all derive the display from current selection/mode and leave no stale marker.
+- Added an explicit card-button ARIA label in the visual information order: owner, displayed card/Legacy name, Legacy and current selected mode when applicable, primary/secondary purposes, current displayed speed, complete rules text, and `ALTで味方を1マス移動`. The visual purpose row and SVGs are `aria-hidden`; no nested button or additional focus stop was introduced.
+- Increased only the card's minimum/content-driven height. Desktop five-column, 700px 155px horizontal hand, and 320px one-column hand rules remain unchanged. Purpose rows neither wrap nor scroll horizontally; long card content expands downward rather than being clipped.
+- Added forced-colors treatment for purpose cards, origin frame, and active move-use marker while preserving complete Japanese labels and solid/dashed hierarchy.
+- Documented the five-purpose vocabulary, all twelve mappings, Legacy replacement, and separation from the universal one-tile ALT in README and DESIGN.
+
+Purpose metadata is referenced only by the card display helpers and `renderHand()`. Card effect resolution, target/range checks, speed order, forecast, movement conversion, enemy AI, draw order, queue order, and execution do not read it and were not changed.
+
+## Acceptance coverage
+
+- Requires exactly five known purpose keys with unique labels and SVG shapes, exactly twelve existing cards, one or two non-duplicated known categories per card, and deep equality with the decided twelve-card mapping. Hunter's Mark alone may specialize Control with `印`; no third or unknown category is accepted.
+- Renders all twelve cards in fixed hand order and checks the exact main/secondary Japanese labels, owner/role, name, complete unchanged rules text, visible `ALT：味方を1マス移動`, existing speed, one card button, decorative SVG count, and explicit ARIA order. Render fingerprints verify units, hand, deck, discard, queue, intents, runes, and forecast remain unchanged.
+- Pins the two easy-to-misclassify cases: Hunter's Mark is one `妨害：印` purpose without Attack, and Ember Rune is `罠＋妨害` without Attack from its delayed damage.
+- Exercises technique selection → move mode → technique → deselection, switching from a moved card to another card, target confirmation, and one undo. Visual classes, `使用中：移動命令`, `元の用途`, full one-tile ALT semantics, categories, and ARIA all return to the current state without stale mode information.
+- Puts each owner at HP0 and renders all four of that owner's hand cards. Every instance shows the correct single current Legacy purpose, name, LEGACY tag, FAST in ARIA, and one-tile ALT; every unrelated original purpose class is absent. Legacy-to-move mode retains the Legacy purpose as the origin.
+- Static coverage keeps primary/secondary hierarchy, minimum 9px classification text, no move-origin opacity reduction, the existing 155px card and one-column rules, forced-colors support, and synchronized README/DESIGN language. ACT 01–11 smoke regressions remain active.
+
+## Verification
+
+Executed with the bundled Node.js runtime:
+
+```text
+node --check outputs/order-3/game.js
+node --check work/smoke-test.js
+node work/smoke-test.js
+ORDER//3 smoke tests passed
+```
+
+A local headless Chrome pass rendered all twelve cards, then exercised selection/move mode, keyboard focus, Vale Legacy replacement, forced colors, and a five-purpose visual fixture:
+
+- 1280×720: document `1280 == 1280`; hand top remains `648.94`; hand `1214 == 1214`; first-row card `234.8 × 172`; all purpose rows and card content fit.
+- 700×900: document `700 == 700`; hand top `853.75 < 900`; existing horizontal hand `1974 > 658`; every card remains exactly `155px` wide and grows to `208.5px` where needed; the longest two-purpose rows, full text, one-tile ALT, and speed all fit.
+- 320×900: document `320 == 320`; hand top `796.14 < 900`; hand `278 == 278` with no horizontal scrolling; card `278 × 172`; ACTION ORDER remains the local horizontal scroller.
+- At all widths, every category stays at least 9px, complete category and ALT text has no internal overflow, primary fill/solid border and secondary dashed border remain distinct, every owner/name/rules/speed/bottom row stays inside its card, all SVG counts match visible purposes, and no nested controls are created.
+- Selected move mode keeps its origin categories at computed opacity `1`, fits beside the existing speed/LEGACY badge without overlap, and exposes complete mode/origin/ALT ARIA. Forced-colors emulation retains `妨害：印` and a visible solid border. Browser console warnings/errors are zero.
+
+## Remaining risks and unmeasured outcome
+
+- Automated and visual browser QA establishes display completeness, distinction, input non-interference, and responsive geometry. It does not establish that a player actually finds the needed answer faster; purpose-search speed and whether Pommel Break/Pinning Arrow are naturally sought under Control require a user playtest.
+- Forced-colors was emulated in Chrome, and 320px covers the narrow responsive state, but a physical 200% browser-zoom and screen-reader voice pass were not performed.
+- The filled SVG shapes remain intentionally compact at 12px inside a 155px card. Their Japanese text is the authoritative fallback if a particular display makes fine icon details less distinct.
