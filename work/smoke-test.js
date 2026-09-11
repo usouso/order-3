@@ -1866,6 +1866,33 @@ const tests = `
       "narrow CSS should use board, execution, side order and local timeline scrolling");
     assert(/@media \\(max-width:\\s*720px\\)[\\s\\S]*--cell-size:\\s*min\\(calc\\(\\(100vw - 86px\\) \\/ 6\\),\\s*54px\\)/.test(styleSource),
       "700px-class CSS should cap battlefield cells at 54px while retaining the 320px calculation");
+    const css720Start = styleSource.indexOf("@media (max-width: 720px)");
+    const css420Start = styleSource.indexOf("@media (max-width: 420px)");
+    const css720 = styleSource.slice(css720Start, css420Start);
+    const css420 = styleSource.slice(css420Start);
+    assert(css720.includes(".timeline-panel { padding: 8px 10px; }")
+      && css720.includes(".timeline-heading { margin-bottom: 5px; }")
+      && css720.includes(".action-timeline { min-height: 116px; padding: 0 2px 3px; }")
+      && css720.includes(".timeline-step { flex-basis: 158px; min-height: 112px; gap: 2px; padding: 5px; }")
+      && css720.includes(".intent-reference summary { padding: 4px 2px 1px; }"),
+      "the 720px corrective contract should compact spacing without removing timeline content");
+    assert(css420.includes("body { min-width: 0; }")
+      && css420.includes("grid-template-columns: minmax(0, 1fr)")
+      && css420.includes("overflow-x: visible")
+      && !css420.includes(".hand { display: flex")
+      && !css420.includes(".hand { overflow-x: auto"),
+      "the 420px corrective contract should release body width and make the hand a non-scrolling single column");
+    assert(css720.includes(".action-timeline") && styleSource.includes(".action-timeline { overflow-x: auto; }"),
+      "ACTION ORDER should remain the sole intended horizontal scroller at phone width");
+  }
+
+  {
+    resetGame();
+    renderHand();
+    assert(el.hand.children.length === game.hand.length
+      && game.hand.every((instance, index) =>
+        el.hand.children[index].innerHTML.includes(cardDefs[instance.cardId].text)),
+      "the one-column phone hand must retain every card's complete existing rules text");
   }
 
   {

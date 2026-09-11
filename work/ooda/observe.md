@@ -285,3 +285,221 @@ DOM詳細では、TURN 03の追跡獣セルは`aria-label="4列 5行"`、`cellCl
 ## 残留リスク
 
 ブラウザ上の内部stateはグローバル公開されていないためDOM・ログ・操作結果で確認し、レコード保持そのものは自動テストで補完した。未使用の`.predicted-ko` CSS定義は残るが、現行JavaScriptはこのクラスやKOマーカーを生成せず、表示上の影響はない。
+
+# ACT 10 QA
+
+更新: 2026-09-12 00:27 JST
+
+## 判定
+
+**FAIL。中央の実行読路、6イベントの情報、通常操作、ACT 01〜09の軽回帰は成立したが、狭幅表示でP1を2件確認した。**
+
+製品ファイル、`work/smoke-test.js`、DECIDE／ORIENTは編集せず、本節だけを追記した。
+
+## 自動テスト
+
+- `node --check outputs/order-3/game.js`: PASS
+- `node --check work/smoke-test.js`: PASS
+- `node work/smoke-test.js`: PASS（`ORDER//3 smoke tests passed`）
+
+## 実ブラウザ環境
+
+- 新規localhost: `http://127.0.0.1:8784/?qa=act10-20260912-0010`
+- ブラウザ: Codex in-app browser
+- キャッシュバスター付きの新規タブで開始し、TURN 01〜03を通常操作で進行した。
+- console warning／error: 0件
+
+## 1280×720
+
+3枚を登録して敵3＋味方3の6イベントにした状態で、スクロール位置`[0,0]`から測定した。
+
+| 観点 | 実測・結果 |
+| --- | --- |
+| 文書横overflow | `documentElement clientWidth=1265 / scrollWidth=1265`。なし。 |
+| 戦場全体 | `top=137 / bottom=534.94`。全体が初期viewport内。 |
+| 主方向見出し | `top=102`、`18px`、`font-weight:900`、文言`左から順に実行 01 → 02 → 03 → …`。 |
+| 6イベント | 全カードが`top=147.69 / bottom=325.53`かつ左右もviewport内。ACTION ORDERは`clientWidth=723 / scrollWidth=723`で横overflowなし。 |
+| 手札上端 | `#hand top=648.94`。初期viewportと交差。 |
+| 目視 | 戦場、方向見出し、6イベント、手札カード上部を同時に識別できた。盤面の6×6は維持。 |
+
+## 実行順と情報の完全性
+
+- 味方命令を0→1→2→3枚と追加し、各段階で`buildResolutionEvents()`由来の実順へ挿入された。
+- 6イベントすべてに、番号、ENEMY／ALLY、行動者、行動名、速度、対象、効果または`予測：`結果が固定順で表示された。aria-labelも同じ順序だった。
+- カード選択中は`この命令`、`対象：選択待ち`、`aria-pressed=true`、`aria-expanded=true`となり、直前スナップショットから合法対象を表示した。確定後は実行者名・対象・予測結果へ更新された。
+- 途中イベントを選ぶと`行動順 03 の直後を予測表示中。`となり、盤面位置と詳細が同じ追跡獣の移動後スナップショットへ変化した。
+- `最終予測`ではイベント選択が解除され、位相交換後の位置、ルークの移動予定位置、火種の罠予定位置が盤面へ反映された。
+- `一手戻す`で3枚目だけがキューから戻り、イベント数6→5、予定罠が消え、カードが手札へ復帰した。再登録も正常。
+- 実行開始直後、先頭イベントだけが`.current`、`aria-current="step"`、`aria-expanded=true`となり、`aria-pressed`は付かなかった。詳細と盤面も同じ実行中スナップショットだった。
+- ルークの踏み込み斬りで追跡獣を撃破する列では、後続の追跡獣イベントが`取消：息を整える`かつ`予測：取消：行動者が戦闘不能`となった。最終盤面にHP0駒は残らなかった。
+
+## 敵行動3ターンの確認
+
+| TURN | 行動 | 表示内容と強調 |
+| --- | --- | --- |
+| 01 | 追跡獣「忍び寄る」 | 対象イオナ、2マス移動、隣接時2ダメージ。`2`、`移動`、`ダメージ`だけが白・900で強調。 |
+| 01 | 詠唱師「災印を刻む」 | 4マスの座標、予告座標へ固定、次ターンに同じ座標を起爆。`次ターン`を強調。 |
+| 02 | 追跡獣「飛びかかり」 | 対象ヴェイル、3マス突進、隣接時4ダメージ。`3`、`突進`、`4`、`ダメージ`を強調。 |
+| 02 | 城壁兵「盾の圧力」 | 対象ルーク、1マス接近、隣接時3ダメージ＋露出。`1`、`接近`、`3`、`ダメージ`、`露出`を強調。 |
+| 02 | 詠唱師「災印起爆」 | 対象4マス、全マス4ダメージ、柄打ちで詠唱解除可能。`4`、`ダメージ`、`柄打ち`、`解除`を強調。 |
+| 03 | 城壁兵「反撃姿勢」 | 自身が対象、装甲6、次の隣接攻撃へ反撃4。`装甲`、`6`、`4`、`ダメージ`を強調。 |
+| 03 | 詠唱師「生命吸収」 | 対象ルーク、味方に2ダメージ、敵側負傷者を2回復。両方の`2`、`ダメージ`、`回復`を強調。 |
+
+基礎効果は既存descriptionの原文だけを表示し、結果は`予測：`接頭辞で分離されていた。別ターンの効果や推測値の混入は見つからなかった。
+
+## 敵予告details
+
+- 初期状態は`open=false`で、`#intent-list`の計算済み表示は`none`。
+- 閉じた通常状態では`最も近い味方へ2マス移動`と`予告座標へ災印を固定`はいずれも可視テキスト内に1回だけで、旧予告との重複なし。
+- 開くと追跡獣HP8/8、城壁兵HP12/12、詠唱師HP7/7、行動名、対象、速度、原文descriptionを読めた。
+
+## 狭幅・フォーカス
+
+### 700×900
+
+- 文書は`clientWidth=685 / scrollWidth=685`で横overflowなし。
+- 戦場は`top=127 / bottom=484`、実行パネルは`top=533`、方向見出しは`top=562`、ACTION ORDERは`top=607.69 / bottom=795.53`。盤面→実行読路→COMMAND HANDの順は維持。
+- ACTION ORDERだけが`clientWidth=643 / scrollWidth=934`で横スクロールした。最初は`scrollLeft=0`、6番目へのTab移動後は`scrollLeft=291`で最大値へ到達し、最初／最後のイベントカード全体がコンテナ内かつviewport内に入った。
+- ただし6イベント時の`#hand top=924.53`で、手札カード上端は初期900px viewportの外だった。COMMAND HAND見出しだけが画面下端に見える。
+
+### 320×900
+
+- 戦場は`left=21 / right=299 / top=141 / bottom=408`で6×6全体を表示し、盤面→実行読路→手札の順は維持。
+- ACTION ORDERは`clientWidth=278 / scrollWidth=934`。Tabで1番目は`scrollLeft=0`、6番目は`scrollLeft=654`（最大656）へ移動し、両カードとも全体が見えた。
+- `#hand top=893.92`でカード上端は初期viewportと交差した。カード自体は`clientHeight=178 / scrollHeight=178`で縦方向の内容欠落なし。
+- ただし文書は`clientWidth=305 / scrollWidth=321`で16pxのページ横overflowがあり、画面下部にページ全体の横スクロールバーが出た。
+- さらに手札も`clientWidth=278 / scrollWidth=324 / overflow-x:auto`で、ACTION ORDER以外の第二の横スクロール領域になった。
+
+### 実ブラウザ200%ズーム
+
+in-app browserへ`Ctrl++`、`Ctrl+=`、`Ctrl+Shift+=`、Ctrl＋テンキー加算を送ったが、CSS viewport、visual viewport、DPRが変化せず、この環境ではブラウザクロームの実ズームを操作できなかった。Chrome／Edgeの別ブラウザ接続も利用不可だった。
+
+代替として1280×720の200%相当である640×360 CSS viewportを実ブラウザへ設定して確認した。この条件では文書`clientWidth=625 / scrollWidth=625`、横スクロールはACTION ORDERだけ（`583 / 934`）、盤面→実行読路→手札のDOM／視覚順を維持し、Tabで1番目`scrollLeft=0`、6番目`351`へ到達して両イベント全体を表示できた。これは実ズームそのものの合格証跡ではないため、修正後QAでユーザー環境またはズーム操作可能なブラウザによる再確認が必要。
+
+## ACT 01〜09の軽回帰
+
+- FE式移動: 移動者ルークの合法先は上下左右の`[3,5] / [2,6] / [4,6]`だけで、斜めなし。
+- 移動予定位置: 最終予測でルークが`[4,6]`へ表示され、取り消しで元へ戻った。
+- 敵HP: 盤面と開いた敵詳細の双方で表示。
+- 火種の罠: TURN 02の飛びかかりは`[4,5]`で停止、罠3ダメージ、残り移動停止、罠消滅、非隣接のため攻撃不発。予測・詳細・ログ・実行後位置が一致。
+- HP0非描画: 追跡獣撃破の最終予測で盤面から消え、HP0の通常駒やKOゴーストは残らなかった。後続行動は取消。
+- 予測と実行、対象、速度順、帯電、災印、ログに新しい回帰は見つからなかった。
+
+## 優先度別の観察事項
+
+### P0
+
+なし。
+
+### P1
+
+#### [P1] 700×900の6イベント時、手札カード上端が初期viewport外へ落ちる
+
+- 再現: 700×900、ページ先頭、敵3イベントがあるターンで味方命令を3枚登録する。
+- 実際: 戦場bottom `484`、実行パネルbottom `856.53`、COMMAND HANDパネルtop `871.53`に対し、実際の`#hand top=924.53`。画面内には見出しだけが残り、カードへ進むにはスクロールが必要。
+- 期待: 6イベントでも手札カード上端が900px viewportと交差する。ACT 10実装記録のheadless値`899.14`は実機の日本語フォント折返しを再現していない。
+- 影響: 敵の予定と6件の順番を読んだ直後、差し込むカード候補を同じ初期画面で認識できず、中央読路の完了条件を外す。
+- 最小修正候補: 700px域でイベントカードの縦padding／gapまたは補助行高を約25px削減する、あるいはexecution panel下部の余白を詰める。効果文や対象情報を削らず、実機のYu Gothic UIで`#hand top < 900`を回帰条件にする。
+
+#### [P1] 320×900でページ横overflowと手札の追加横スクロールが発生する
+
+- 再現: 320×900へ変更し、ページ先頭と画面下部を確認する。
+- 実際: `documentElement clientWidth=305 / scrollWidth=321`で16pxの横overflow。`body { min-width: 320px; }`が縦スクロールバー分を除いたlayout viewportより広く、`.game-shell right=312`、ヘルプbutton `right=320.91`まで張り出す。ページ下部に全体横スクロールバーが見える。
+- 同時に`.hand`も`clientWidth=278 / scrollWidth=324 / overflow-x:auto`となり、ACTION ORDER以外の横スクロール領域になる。
+- 影響: ページ全体と手札とACTION ORDERの三つの横方向操作が競合し、盤面→実行読路→手札という一方向の読路を崩す。右端ヘルプも横位置によって欠け得る。
+- 最小修正候補: 420px以下で`body`の`min-width:320px`を解除し、`.game-shell`を利用可能なclient width内へ収める。手札は1列gridまたは幅100%カードへ切り替え、横overflowは`#action-timeline`だけに限定する。
+
+### P2
+
+なし。
+
+## 修正後の重点回帰
+
+1. Yu Gothic UIの実ブラウザ700×900、敵3＋味方3イベント、最長の効果文を含む状態で`#hand.getBoundingClientRect().top < 900`。
+2. 320×900で`documentElement.scrollWidth === documentElement.clientWidth`、ヘルプbuttonのrightがclientWidth以下。
+3. 320×900で横スクロール可能な要素は`#action-timeline`だけ。手札の全カード本文は省略せず縦方向に読める。
+4. 700／320とも、ACTION ORDERの最初と最後へ手動スクロールおよびTabで到達し、フォーカスカード全体が見える。
+5. 1280×720の戦場全体、18px主方向、6イベント、手札上端、横overflowなしを維持する。
+6. ズーム操作可能な実ブラウザで200%へ変更し、文書横overflow、読路順、局所スクロール、フォーカス被覆を再確認する。
+
+# ACT 10 corrective QA
+
+更新: 2026-09-12 00:54 JST
+
+## 判定
+
+**PASS。ACT 10 QAで報告したP1二件は、実ブラウザの再測定で解消した。新規のP0／P1／P2不具合は確認されなかった。**
+
+製品ファイル、`work/smoke-test.js`、DECIDE／ORIENTは編集せず、本節だけを追記した。
+
+## 自動検査
+
+- `node --check outputs/order-3/game.js`: PASS
+- `node --check work/smoke-test.js`: PASS
+- `node work/smoke-test.js`: PASS（`ORDER//3 smoke tests passed`）
+
+## 実ブラウザ環境
+
+- localhost: `http://127.0.0.1:8795/`
+- キャッシュバスター: `?qa=act10-corrective-20260912-0035`、再接続後`?qa=act10-corrective-20260912-0045`
+- ブラウザ: Codex in-app browser
+- 計算済みフォント: `"Yu Gothic UI", "Hiragino Sans", system-ui, sans-serif`
+- console warning／error: 0件
+
+TURN 01〜03を通常操作で進め、TURN 03の生命吸収、息を整える、反撃姿勢を含む敵3イベントへ味方3命令を追加した。各イベントには番号、陣営、行動者、行動名、速度、対象、既存description由来の効果、`予測：`結果が残り、6枚すべてで縦内容の欠落はなかった。
+
+## P1二件の修正確認
+
+### 700×900 — PASS
+
+- ページ先頭、敵3＋味方3の最長効果を含む6イベントで`#hand top=883.53`。前回の`924.53`から約41px上がり、`883.53 < 900`を満たした。
+- 戦場`top=127 / bottom=484`、方向見出し`top=558`、ACTION ORDER`top=599.69 / bottom=771.53`、実行パネル`bottom=815.53`、手札`top=883.53`の順で、盤面→実行読路→手札が維持された。
+- 方向見出しは18px。全6イベントの`scrollHeight=clientHeight=156`で、対象、効果節、予測を削除・クリップしていない。
+- 文書は`clientWidth=685 / scrollWidth=685`で横overflowなし。
+- ACTION ORDERは`clientWidth=647 / scrollWidth=982 / maxScrollLeft=335`。手動操作では`0→335`で最後、初期`0`で最初を完全表示できた。
+- Tab順は1→6で実解決順どおり。1枚目は`scrollLeft=0`、6枚目は`335`となり、いずれもカード全体がコンテナ内かつviewport内に入った。
+
+### 320×900 — PASS
+
+- 文書は`documentElement clientWidth=305 / scrollWidth=305`、`body clientWidth=305 / scrollWidth=305`。前回の16pxページ横overflowは消えた。
+- ヘルプbuttonは`right=297 <= clientWidth 305`で右端欠けなし。
+- 6イベント時のACTION ORDERは`clientWidth=267 / scrollWidth=982`。実際に横スクロール可能な要素を全DOMから列挙しても`#action-timeline`だけだった。
+- 手札は`display:grid`、1列`263px`、`clientWidth=263 / scrollWidth=263 / overflow-x:visible`。第二の横スクロールは消えた。
+- 命令登録前の全5カードも実ブラウザで再確認した。各カードは`scrollWidth=clientWidth`かつ`scrollHeight=clientHeight`で、最長の連鎖火花を含む所有者、名称、効果全文、ALT移動、速度が縦に読めた。
+- 戦場は`left=21 / right=284`で6×6全体が利用可能client width内に収まった。
+
+## 1280×720回帰 — PASS
+
+- 文書`clientWidth=1265 / scrollWidth=1265`、ACTION ORDER`clientWidth=723 / scrollWidth=723`で横overflowなし。
+- 戦場全体は`top=137 / bottom=534.94`。
+- 方向見出しは`top=102`、18px、weight 900。
+- 6イベントはすべて`top=149.69 / bottom=319.53`かつ左右もviewport内。
+- 手札上端は`648.94 < 720`。
+- 敵詳細は初期`open=false`、`#intent-list display:none`を維持。
+
+## 640×360（200%幅相当）— PASS
+
+- 文書`clientWidth=625 / scrollWidth=625`で横overflowなし。
+- ACTION ORDERだけが`clientWidth=587 / scrollWidth=982`で局所横スクロール。
+- Tabで1枚目は`scrollLeft=0`、6枚目は最大`395`へ到達し、両端のカード全体が見えた。
+- 盤面→実行読路→手札のDOM／視覚順を維持。
+
+実ブラウザ200%ズームは再試行したが、Ctrl＋テンキー加算と`Ctrl+Shift+=`の双方でCSS viewport、visual viewport、DPRが変化しなかった。in-app browserはブラウザクロームのズーム操作を公開していないため、今回も640×360相当までを合格証跡とし、実200%そのものは未確認として残す。
+
+## 軽回帰
+
+- ACT 09 HP0非描画: 全スモークの死亡・途中／最終予測・解決・次ターン・終局回帰がPASS。実ブラウザでも盤面にHP0駒やKOゴーストは出ず、生存6駒だけを表示した。
+- 敵説明: TURN 01の忍び寄る、庇護、災印を刻むと、TURN 03の生命吸収、息を整える、反撃姿勢の原文効果、対象、速度を維持。閉じたdetailsとの可視重複なし。
+- 予測: 味方3命令の結界、装甲、移動、ダメージ、移動不能、帯電、連鎖結果を`予測：`で基礎効果と区別した。
+- 順番: 6イベントのDOM／aria／Tab順が実解決順に一致。
+- 320pxの1列化後もカード本文を省略していない。
+
+## 優先度別結果
+
+- P0: なし
+- P1: なし（前回二件は解消）
+- P2: なし
+
+## 残留確認事項
+
+ブラウザクロームを直接操作できる環境で、実ズーム200%だけは別途確認する。640×360の同等CSS幅ではoverflow、両端到達、フォーカス被覆の問題はなかった。

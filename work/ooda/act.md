@@ -454,3 +454,42 @@ A local headless Chrome layout pass with six mixed events also succeeded:
 - Exact Japanese font wrapping and perceived scan speed should still be checked on the user display. Geometry, overflow, information completeness, focus reveal, and console state were browser-tested.
 - Native `details` keyboard behavior is supplied by the browser and its closed initial state is tested, but no separate screen-reader announcement pass was performed.
 - Effect/status badges, card classification icons, enemy path overlays, and Ember Rune summary redesign remain intentionally outside ACT 10.
+
+## Corrective pass
+
+ACT 10 QA reported two narrow-screen P1 failures: the six-event 700×900 layout placed the hand at `924.53px`, and the 320×900 layout produced 16px of document overflow plus a second horizontal hand scroller.
+
+### Changes
+
+- At 720px and below, compacted only vertical spacing in the execution panel: panel padding, heading margin, timeline padding/minimum height, event-card padding/gap/minimum height, idle-row spacing, and the closed intent-reference summary.
+- Increased narrow event-card basis from 150px to 158px. This reduces Japanese wrapping while keeping ACTION ORDER as a one-row local scroller; target, effect clauses, forecast, side, speed, and direction heading remain complete.
+- At 420px and below, removed the global `body` minimum width, constrained the shell and topbar to the actual client width, reduced topbar gaps and heading sizes, and retained all controls.
+- At 420px and below, changed the hand from a horizontal flex scroller to a one-column grid. Cards are full width and retain their complete existing rules text.
+- No game data, event ordering, forecast, card content, AI, combat, FE adjacency, ACT 09, or Ember Rune rule changed.
+
+### Corrective coverage
+
+- Static smoke checks pin the 720px execution-panel compression, 158px event width, closed-details spacing, 420px `body { min-width: 0; }`, one-column hand, and non-scrolling hand overflow.
+- DOM smoke coverage confirms every hand card still contains its complete existing card text.
+- Existing checks continue to require one ACTION ORDER, exact enemy descriptions, all six event fields, fixed-order aria, nearest focus reveal, and render-state immutability.
+
+### Corrective browser measurements
+
+A local headless Chrome run using the computed `"Yu Gothic UI", "Hiragino Sans", system-ui, sans-serif` font stack passed all target widths with six mixed events:
+
+- 1280×720: document `1280 == 1280`; battlefield bottom `534.94`; direction heading top `102`; hand top `648.94`; ACTION ORDER `732 == 732`; all six cards contain their content.
+- 700×900: document `700 == 700`; hand top `863.14` (61.39px above the reported failing value and 36.86px inside the viewport); ACTION ORDER `982 > 662`; all six cards contain their content; manual and focus navigation reveal the first and last cards.
+- 320×900: document `320 == 320`; help right `312 <= 320`; hand `scrollWidth 278 == clientWidth 278` with `overflow-x: visible`; the only actual horizontal scroller is `#action-timeline`; manual and focus navigation reveal both ends.
+- 640×360 200%-width equivalent: document `640 == 640`; ACTION ORDER remains locally scrollable and both end cards remain reachable.
+- Enemy details remained closed and console warnings/errors were zero in all four runs.
+
+### Corrective verification
+
+```text
+node --check outputs/order-3/game.js
+node --check work/smoke-test.js
+node work/smoke-test.js
+ORDER//3 smoke tests passed
+```
+
+Actual in-app browser QA should remeasure its non-overlay scrollbar and browser zoom. The corrective margins are substantially larger than the original 0.86px headless margin, but automated 640px width remains a zoom equivalent rather than a browser-chrome 200% zoom operation.
