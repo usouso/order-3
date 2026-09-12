@@ -2,13 +2,16 @@
 (function (root) {
   "use strict";
   const KEY = "order3.playtestNotes.v1";
-  const TARGET = "https://github.com/usouso/order-3/issues/new";
+  const TARGET = "https://docs.google.com/forms/d/e/1FAIpQLSdlXmRTYuIASUMyvcYxg_OnziKKaA9I_T5FXlRXq9u3sJYs8g/viewform";
+  const FORM_ENTRY = "entry.1309058111";
+  const LEGACY_TARGET = "https://github.com/usouso/order-3/issues/new";
   const KINDS = { impression: "感想", idea: "改善案", bug: "不具合" };
   const clone = value => JSON.parse(JSON.stringify(value));
   const contentKey = note => JSON.stringify([note.id, note.kind, note.body, note.scene]);
   const sameContent = (a, b) => Boolean(a && b && contentKey(a) === contentKey(b));
   const revisionKey = note => { const { share, ...revision } = note; return JSON.stringify(revision); };
   const shareTime = note => Date.parse(note.share?.handoffOpenedAt) || 0;
+  const formTime = note => Date.parse(note.share?.forms?.openedAt || note.share?.forms?.preparedAt) || 0;
   const validDate = value => typeof value === "string" && Number.isFinite(Date.parse(value));
   function validScene(scene) {
     return scene === null || (scene && validDate(scene.capturedAt) && typeof scene.gameVersion === "string"
@@ -41,6 +44,8 @@
       // Handoff history cannot make an older content revision win a merge.
       if (sameContent(note, previous)) {
         selected.share = clone(shareTime(note) > shareTime(previous) ? note.share : previous.share);
+        const forms = formTime(note) > formTime(previous) ? note.share?.forms : previous.share?.forms || note.share?.forms;
+        if (forms) selected.share.forms = clone(forms);
       }
       byId.set(note.id, selected);
     }
@@ -98,6 +103,22 @@
           return "saved";
         } catch (err) { fail(err); return "error"; }
       },
+      recordForm(snapshot, form, openedAt = null) {
+        try {
+          const latest = read();
+          const current = { ...data, ...latest, notes: merge(data.notes, latest.notes) };
+          const note = current.notes.find(item => item.id === snapshot.id);
+          data = current; error = "";
+          if (!sameContent(note, snapshot)) return "changed";
+          const recorded = clone(note);
+          recorded.share = { ...note.share, forms: { ...form, openedAt: openedAt || (note.share?.forms?.key === form.key ? note.share.forms.openedAt : null) || null,
+            externalUrl: TARGET } };
+          const candidate = { ...current, notes: current.notes.map(item => item.id === recorded.id ? recorded : item) };
+          parse(JSON.stringify(candidate));
+          getStorage().setItem(KEY, JSON.stringify(candidate));
+          data = candidate; return "saved";
+        } catch (err) { fail(err); return "error"; }
+      },
       // Storage-event reconciliation retains distinct notes after concurrent read/merge/write races.
       receive(incomingRaw) {
         try {
@@ -114,6 +135,16 @@
     return cryptoObject?.randomUUID ? cryptoObject.randomUUID()
       : `note-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
   }
+  let fallbackSequence = 0;
+  function newSubmissionId(cryptoObject = globalThis.crypto) {
+    if (cryptoObject?.randomUUID) return cryptoObject.randomUUID();
+    if (cryptoObject?.getRandomValues) {
+      const bytes = new Uint8Array(16);
+      cryptoObject.getRandomValues(bytes);
+      return `send-${Array.from(bytes, value => value.toString(16).padStart(2, "0")).join("")}`;
+    }
+    return `send-${Date.now().toString(36)}-${(++fallbackSequence).toString(36)}`;
+  }
   function sceneText(scene) {
     if (!scene) return "";
     return [`- ゲーム版: ${scene.gameVersion}`, `- TURN: ${String(scene.turn).padStart(2, "0")}`,
@@ -125,15 +156,28 @@
     return `<!-- order3-feedback:v1 note-id=${note.id} -->\n## 試遊メモ：${KINDS[note.kind]}\n\n${note.body}${note.scene ? `\n\n### 場面\n${sceneText(note.scene)}` : ""}\n`;
   }
   function sharePayload(note) {
+    // Historical formatter remains available for validating old exports; the UI uses formPayload.
     const title = `[ORDER//3 メモ] ${KINDS[note.kind]}｜${Array.from(note.body.replace(/\s+/g, " ").trim()).slice(0, 48).join("")}`;
     const body = markdown(note);
-    const url = new URL(TARGET);
+    const url = new URL(LEGACY_TARGET);
     url.search = new URLSearchParams({ title, body }).toString();
     const long = url.href.length > 7000;
     if (long) url.search = new URLSearchParams({ title }).toString();
     return { url: url.href, body, long };
   }
-  const api = { KEY, TARGET, KINDS, clone, sameContent, parse, merge, createStore, newId, sceneText, markdown, sharePayload };
+  const formKey = (note, version) => JSON.stringify([note.id, note.kind, note.body, note.scene, version]);
+  function formText(note, submissionId, version) {
+    return `${note.body}${note.scene ? `\n\n【添付した場面】\n${sceneText(note.scene)}` : ""}\n\n【メモの記録】\n種類: ${KINDS[note.kind]}\nメモ番号: ${note.id}\n送信番号: ${submissionId}\n送信時のゲーム版: ${version}`;
+  }
+  function formPayload(note, submissionId, version) {
+    const body = formText(note, submissionId, version);
+    const url = new URL(TARGET);
+    url.searchParams.set(FORM_ENTRY, body);
+    const prefilled = url.href.length <= 1800;
+    return { url: prefilled ? url.href : TARGET, body, long: !prefilled, prefilled };
+  }
+  const api = { KEY, TARGET, FORM_ENTRY, LEGACY_TARGET, KINDS, clone, sameContent, parse, merge, createStore, newId,
+    newSubmissionId, sceneText, markdown, sharePayload, formKey, formText, formPayload };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.Order3Notes = api;
 })(globalThis);

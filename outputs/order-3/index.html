@@ -119,7 +119,7 @@
     </section>
   </main>
 
-  <div id="modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+  <div id="modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title" data-screen="initial">
     <div class="modal-card">
       <p class="eyebrow">FIELD BRIEFING</p>
       <h2 id="modal-title">3枚で、戦況を組み替えろ。</h2>
@@ -129,7 +129,10 @@
         <div class="brief-step"><b>3</b><span>命令を最大3枚並べて「作戦実行」。</span></div>
         <p>どのカードも「味方を1マス動かす」命令に変換できます。</p>
       </div>
-      <button id="modal-button" class="execute-button wide">戦闘開始</button>
+      <div id="modal-actions" class="modal-actions">
+        <button id="modal-button" type="button" class="execute-button wide">戦闘開始</button>
+        <button id="modal-help-button" type="button" class="secondary-button" aria-haspopup="dialog" aria-controls="modal">遊び方・全ての技</button>
+      </div>
     </div>
   </div>
 
@@ -139,8 +142,9 @@
       <button id="notes-close" type="button">閉じる</button>
     </header>
     <div class="notes-scroll">
+      <div id="notes-editor">
       <div class="notes-toolbar"><button id="notes-new" type="button">新しいメモ</button><span id="notes-count">端末保存 0件</span></div>
-      <p class="notes-notice">このブラウザへ自動保存します。制作側へ共有するには、下の「制作に送る」からGitHubで投稿してください。</p>
+      <p class="notes-notice">このブラウザへ自動保存します。制作へ送るには「制作に送る」からフォームで送信してください。</p>
       <fieldset class="notes-kinds"><legend>種類</legend>
         <label><input type="radio" name="note-kind" value="impression" checked>感想</label>
         <label><input type="radio" name="note-kind" value="idea">改善案</label>
@@ -168,27 +172,44 @@
         </div>
       </div>
       <section class="notes-share-area" aria-label="制作への共有">
-        <button id="notes-share" class="notes-share" type="button">制作に送る ↗ <small>GitHubで確認</small></button>
-        <p class="notes-notice">投稿するとGitHubで公開されます。最終投稿はGitHub画面で行います。</p>
+        <button id="notes-share" class="notes-share" type="button">制作に送る <small>フォームで内容を確認</small></button>
+        <p class="notes-notice">種類・メモ番号・ゲーム版も送ります。場面は選んだときだけ添付します。</p>
         <p id="notes-share-status" role="status"></p>
         <button id="notes-export-one" type="button">このメモをMarkdownで書き出す</button>
+      </section>
+      </div>
+      <section id="notes-confirm" class="notes-confirm" aria-label="送る内容の確認" hidden>
+        <h3>送る内容の確認</h3>
+        <p class="notes-notice">宛先: ORDER//3 制作（Googleフォーム）</p>
+        <p id="notes-confirm-scene" class="notes-notice"></p>
+        <p class="notes-notice">Googleフォームへ内容を渡して別タブで開きます。ログイン不要・回答は一般公開しません。フォームの「送信」を押すと制作へ届きます。開くだけでは回答は送信されません。</p>
+        <p id="notes-confirm-mode" class="notes-notice"></p>
+        <label for="notes-confirm-text">送る全文（省略なし・選択してコピーできます）</label>
+        <textarea id="notes-confirm-text" rows="8" readonly></textarea>
+        <div class="notes-actions">
+          <button id="notes-confirm-back" type="button">編集へ戻る</button>
+          <button id="notes-confirm-copy" type="button">送る全文をコピー</button>
+          <button id="notes-confirm-export" type="button">送る全文を書き出す</button>
+        </div>
+        <button id="notes-form-open" class="notes-share" type="button">フォームを開く ↗</button>
+        <p id="notes-confirm-status" role="status"></p>
       </section>
       <div id="notes-fallback" hidden>
         <label for="notes-rescue">コピー・書き出しが使えない場合の全文（選択してコピーできます）</label>
         <textarea id="notes-rescue" rows="6" readonly></textarea>
       </div>
       <p id="notes-action-status" role="status"></p>
-      <section aria-labelledby="notes-list-title">
+      <section id="notes-list-area" aria-labelledby="notes-list-title">
         <h3 id="notes-list-title">保存したメモ</h3>
         <ul id="notes-list" class="notes-list"></ul>
       </section>
-      <div class="notes-actions">
+      <div id="notes-all-actions" class="notes-actions">
         <button id="notes-export-json" type="button">全メモを書き出す（JSON）</button>
         <button id="notes-export-md" type="button">全メモを書き出す（Markdown）</button>
       </div>
-      <p class="notes-notice notes-privacy">別端末・別ブラウザには引き継がれません。プライベート閲覧の終了やサイトデータ削除で消えることがあります。大切なメモは書き出して残してください。</p>
+      <p id="notes-privacy" class="notes-notice notes-privacy">別端末・別ブラウザには引き継がれません。プライベート閲覧の終了やサイトデータ削除で消えることがあります。大切なメモは書き出して残してください。</p>
     </div>
-    <footer class="notes-footer">
+    <footer id="notes-footer" class="notes-footer">
       <p id="notes-save-status" aria-live="polite">本文を入力すると自動保存します</p>
       <p class="notes-notice">端末への保存だけでは、制作側へは送信されていません。</p>
       <div class="notes-actions">

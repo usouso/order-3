@@ -1,5 +1,5 @@
 const SIZE = 6;
-const GAME_VERSION = "ACT 15";
+const GAME_VERSION = "ACT 17";
 const SPEED_ORDER = { fast: 0, normal: 1, slow: 2 };
 const SPEED_LABEL = { fast: "FAST", normal: "NORMAL", slow: "SLOW" };
 const WALLS = [{ x: 2, y: 2 }, { x: 3, y: 3 }];
@@ -324,6 +324,11 @@ const el = {
   modalTitle: document.querySelector("#modal-title"),
   modalBody: document.querySelector("#modal-body"),
   modalButton: document.querySelector("#modal-button"),
+  modalHelp: document.querySelector("#modal-help-button"),
+  modalActions: document.querySelector("#modal-actions"),
+  main: document.querySelector("main"),
+  notesButton: document.querySelector("#notes-button"),
+  notesDialog: document.querySelector("#notes-dialog"),
   help: document.querySelector("#help-button")
 };
 
@@ -2051,12 +2056,12 @@ function finishBattle(result) {
     showModal("演習完了。", `
       <p>敵部隊を制圧しました。今回は固定編成ですが、次の段階では戦闘後に仲間かカードを選び、部隊デッキを変化させます。</p>
       <p>何が強かったか、使いにくかったカードは何かを覚えておいてください。</p>
-    `, "もう一度", "restart");
+    `, "もう一度", "restart", "victory");
   } else {
     showModal("部隊壊滅。", `
       <p>敵の予告に対し、移動・防御・妨害のどこへ命令を使うかが鍵です。</p>
       <p>1ターン目に災印が置かれ、2ターン目に起爆します。「柄打ち」か「無効印」も試してください。</p>
-    `, "再戦する", "restart");
+    `, "再戦する", "restart", "defeat");
   }
 }
 
@@ -2878,18 +2883,93 @@ function renderControls() {
 let modalReturnFocus = null;
 let helpReturnModal = null;
 
-function showModal(title, body, buttonText, action = "close") {
+const notesButtonHome = el.notesButton.parentNode;
+const notesButtonNext = el.notesButton.nextSibling;
+const modalCard = el.modal.querySelector?.(".modal-card");
+let modalGeneration = 0;
+const modalHeldKeys = new Map();
+let modalPointerPress = null;
+
+function notesAreOpen() { return Boolean(el.notesDialog.open); }
+
+function isAvailableFocusTarget(node) {
+  if (!node?.isConnected || node.disabled || node.closest?.("[hidden], [inert]") || !node.getClientRects?.().length) return false;
+  if (getComputedStyle(node).visibility === "hidden") return false;
+  for (let parent = node.parentElement; parent; parent = parent.parentElement) {
+    if (parent.tagName === "DETAILS" && !parent.open && !parent.querySelector(":scope > summary")?.contains(node)) return false;
+  }
+  return true;
+}
+
+function restoreGameDialogFocus(preferred, battlefieldFallback = el.help) {
+  if (notesAreOpen()) return;
+  const inCurrentSurface = node => el.modal.hidden ? !el.modal.contains?.(node) : el.modal.contains?.(node);
+  const target = [preferred, el.modal.hidden ? battlefieldFallback : el.modalButton, el.help]
+    .find(node => isAvailableFocusTarget(node) && inCurrentSurface(node));
+  target?.focus({ preventScroll: true });
+}
+
+function syncModalInteraction() {
+  if (!el.modal.hidden) {
+    // Preserve the one existing note control, including listeners and accessible count.
+    if (el.notesButton.parentNode !== el.modalActions) el.modalActions.appendChild(el.notesButton);
+    el.main.inert = true;
+    el.modalHelp.hidden = el.modal.dataset.help === "true";
+  } else {
+    el.main.inert = false;
+    if (notesButtonHome && el.notesButton.parentNode !== notesButtonHome) {
+      notesButtonHome.insertBefore(el.notesButton, notesButtonNext?.parentNode === notesButtonHome ? notesButtonNext : null);
+    }
+  }
+}
+
+function focusModalPrimary() {
+  if (!notesAreOpen()) el.modalButton.focus?.();
+}
+
+function modalActivationAllowed(event) {
+  if (notesAreOpen()) return false;
+  if (event?.detail > 0) {
+    return !modalPointerPress || (modalPointerPress.generation === modalGeneration && modalPointerPress.target === event.currentTarget);
+  }
+  // Keyboard activation is checked at its own keydown/keyup below. A stale,
+  // unrelated key must not veto a fresh key or an assistive-technology click.
+  return true;
+}
+
+function isModalKeyTarget(target) { return target === el.modalButton || target === el.modalHelp; }
+
+function modalKeyPressAllowed(press, target) {
+  return press && !press.cancelled && press.generation === modalGeneration && press.target === target &&
+    !notesAreOpen() && !el.modal.hidden && !target.hidden && !target.disabled;
+}
+
+function activateModalKeyTarget(target) {
+  target.click();
+}
+
+function cancelModalKeyPresses() {
+  // Keep cancelled presses until keyup (or a fresh non-repeat keydown), so a
+  // delayed Space release cannot act on the result shown after an interruption.
+  for (const press of modalHeldKeys.values()) press.cancelled = true;
+}
+
+function showModal(title, body, buttonText, action = "close", screen = "message") {
   // A new briefing/result supersedes any presentation saved beneath Help.
   helpReturnModal = null;
-  if (el.modal.dataset.help !== "true") modalReturnFocus = document.activeElement;
+  if (el.modal.hidden) modalReturnFocus = document.activeElement;
+  modalGeneration += 1;
   el.modalTitle.textContent = title;
   el.modalBody.innerHTML = body;
   el.modalButton.textContent = buttonText;
   el.modal.dataset.action = action;
-  el.modal.dataset.help = "false";
+  el.modal.dataset.help = String(screen === "help");
+  el.modal.dataset.screen = screen;
   el.modal.hidden = false;
   el.modalBody.scrollTop = 0;
-  el.modalButton.focus?.();
+  if (modalCard) modalCard.scrollTop = 0;
+  syncModalInteraction();
+  focusModalPrimary();
 }
 
 function showHelp() {
@@ -2899,9 +2979,15 @@ function showHelp() {
     body: el.modalBody.innerHTML,
     buttonText: el.modalButton.textContent,
     action: el.modal.dataset.action,
+    screen: el.modal.dataset.screen,
     scrollTop: el.modalBody.scrollTop,
+    cardScrollTop: modalCard?.scrollTop || 0,
     returnFocus: modalReturnFocus
   };
+  const returnLabel = !previous ? "戦場へ戻る" : previous.screen === "initial" ? "開始画面へ戻る" : "結果へ戻る";
+  for (const key of openEffectDisclosures) {
+    if (key.startsWith("index-") || key.startsWith("help-")) openEffectDisclosures.delete(key);
+  }
   showModal("命令の組み方", `
     <div class="brief-step"><b>1</b><span>カードをクリックし、光っている対象マスを選びます。</span></div>
     <div class="brief-step"><b>2</b><span>FAST → NORMAL → SLOWの順に解決。同速度では味方が先です。</span></div>
@@ -2915,7 +3001,7 @@ function showHelp() {
     <details class="help-section technique-index"><summary>全ての技の説明（敵9・カード12・遺志3）</summary>
       ${[["enemy", "敵の9技"], ["card", "味方の12カード"], ["legacy", "3つの遺志"]].map(([group, title]) => `<section><h3>${title}</h3>${Object.entries(effectCatalog).filter(([, effect]) => effect.group === group).map(([id]) => renderEffectDetails(id, "index", true)).join("")}</section>`).join("")}
     </details>
-  `, "戦場へ戻る", "close");
+  `, returnLabel, "close", "help");
   helpReturnModal = previous;
   el.modal.dataset.help = "true";
 }
@@ -2932,12 +3018,17 @@ el.previewFinal.addEventListener("click", () => {
   render();
 });
 el.help.addEventListener("click", showHelp);
-el.modalButton.addEventListener("click", () => {
+el.modalHelp.addEventListener("click", event => {
+  if (modalActivationAllowed(event)) showHelp();
+});
+
+function activateModalPrimary() {
   if (el.modal.dataset.help === "true" && helpReturnModal) {
     const previous = helpReturnModal;
-    showModal(previous.title, previous.body, previous.buttonText, previous.action);
+    showModal(previous.title, previous.body, previous.buttonText, previous.action, previous.screen);
     if (previous.action === undefined) delete el.modal.dataset.action;
     el.modalBody.scrollTop = previous.scrollTop;
+    if (modalCard) modalCard.scrollTop = previous.cardScrollTop;
     modalReturnFocus = previous.returnFocus;
     return;
   }
@@ -2947,7 +3038,13 @@ el.modalButton.addEventListener("click", () => {
   el.modal.hidden = true;
   el.modal.dataset.action = "close";
   el.modal.dataset.help = "false";
-  if (modalReturnFocus?.isConnected) modalReturnFocus.focus?.();
+  modalGeneration += 1;
+  syncModalInteraction();
+  restoreGameDialogFocus(modalReturnFocus);
+}
+
+el.modalButton.addEventListener("click", event => {
+  if (modalActivationAllowed(event)) activateModalPrimary();
 });
 
 document.addEventListener("click", event => {
@@ -2957,23 +3054,59 @@ document.addEventListener("click", event => {
 });
 
 document.addEventListener("keydown", event => {
-  if (event.key === "Escape" && pinnedStatusPopover) closeStatusPopover(true);
-  if (el.modal.hidden || event.target?.closest?.("#notes-dialog")) return;
-  if (event.key === "Escape" && el.modal.dataset.action === "close") {
-    event.preventDefault();
-    el.modalButton.click?.();
-  }
-  if (event.key === "Tab" && el.modal.dataset.help === "true") {
-    const controls = [...(el.modal.querySelectorAll?.("button, summary, [tabindex='0']") || [])]
-      .filter(node => node.getClientRects().length > 0);
-    const first = controls[0], last = controls.at(-1);
-    if (!controls.includes(document.activeElement) || (!event.shiftKey && document.activeElement === last)) {
-      event.preventDefault(); first?.focus();
-    } else if (event.shiftKey && document.activeElement === first) {
-      event.preventDefault(); last?.focus();
+  if (event.key === "Enter" || event.key === " ") {
+    if (!event.repeat || !modalHeldKeys.has(event.key)) {
+      modalHeldKeys.set(event.key, { generation: modalGeneration, target: event.target, cancelled: event.repeat });
+    }
+    const press = modalHeldKeys.get(event.key);
+    if (isModalKeyTarget(event.target) && !notesAreOpen()) {
+      // Preserve button timing (Enter on press, Space on release), but consume
+      // the native click so only this gesture can authorize the action.
+      event.preventDefault();
+      if (event.key === "Enter" && !event.repeat && modalKeyPressAllowed(press, event.target)) activateModalKeyTarget(event.target);
+      return;
     }
   }
+  if (notesAreOpen()) return;
+  if (event.key === "Escape" && pinnedStatusPopover) closeStatusPopover(true);
+  if (el.modal.hidden || event.target?.closest?.("#notes-dialog")) return;
+  if (event.key === "Escape" && el.modal.dataset.help === "true") {
+    event.preventDefault();
+    activateModalPrimary();
+    return;
+  }
+  if (event.key === "Tab") {
+    const controls = [...(el.modal.querySelectorAll?.("button, summary, [tabindex='0']") || [])]
+      .filter(isAvailableFocusTarget);
+    const index = controls.indexOf(document.activeElement);
+    const next = index < 0 ? (event.shiftKey ? controls.at(-1) : controls[0])
+      : controls[(index + (event.shiftKey ? -1 : 1) + controls.length) % controls.length];
+    event.preventDefault();
+    next?.focus();
+  }
+}, true);
+
+document.addEventListener("keyup", event => {
+  const press = modalHeldKeys.get(event.key);
+  modalHeldKeys.delete(event.key);
+  if ((event.key === "Enter" || event.key === " ") && isModalKeyTarget(event.target) && !notesAreOpen()) {
+    event.preventDefault();
+    if (event.key === " " && modalKeyPressAllowed(press, event.target)) activateModalKeyTarget(event.target);
+  }
+}, true);
+
+document.addEventListener("focusout", event => {
+  for (const press of modalHeldKeys.values()) if (press.target === event.target) press.cancelled = true;
+}, true);
+globalThis.addEventListener?.("blur", cancelModalKeyPresses);
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") cancelModalKeyPresses();
 });
+
+document.addEventListener("pointerdown", event => {
+  if (event.target === el.modal) event.preventDefault();
+  modalPointerPress = { generation: modalGeneration, target: event.target?.closest?.("button") };
+}, true);
 
 // Display-only, detached summaries for opt-in playtest notes. Never retain combat references.
 function capturePlaytestScene() {
@@ -3009,3 +3142,5 @@ function capturePlaytestScene() {
 }
 
 resetGame();
+syncModalInteraction();
+focusModalPrimary();

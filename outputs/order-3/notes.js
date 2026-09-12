@@ -7,7 +7,8 @@
   const store = N.createStore(() => window.localStorage);
   const memory = new Map();
   let draft = null, openingScene = null, timer = null, dirty = false, rescued = false;
-  let returnFocus = trigger;
+  let returnFocus = trigger, prepared = null, editorScroll = 0, openBusy = false, awaitingReturn = false;
+  const gameVersion = () => typeof GAME_VERSION === "string" ? GAME_VERSION : "ACT 17";
   const placeholders = { impression: "面白かったこと、分かりにくかったこと…", idea: "こうなるとよい、と思ったこと…", bug: "期待したこと／実際に起きたこと…" };
   const say = (element, text) => { if (element.textContent !== text) element.textContent = text; };
   const status = text => say($("save-status"), text);
@@ -75,11 +76,12 @@
   }
   function updateBodyHints() {
     const length = Array.from(body.value).length;
-    $("length").textContent = length > 8000 ? `${length}文字。長文も全文を保存します。共有時はコピー・書き出しを使います。` : `${length}文字`;
+    $("length").textContent = length > 8000 ? `${length}文字。長文も全文を保存します。フォームへはコピー・書き出しで渡せます。` : `${length}文字`;
     for (const name of ["share", "copy", "export-one"]) $(name).disabled = !body.value.trim();
   }
   function loadEditor(note) {
     clearTimeout(timer); timer = null;
+    leaveConfirmation(false);
     clearRescue();
     if (note) {
       draft = N.clone(note);
@@ -136,7 +138,7 @@
   function finishClose() {
     $("close-choice").hidden = true;
     dialog.close();
-    (returnFocus?.isConnected ? returnFocus : trigger).focus({ preventScroll: true });
+    restoreGameDialogFocus(returnFocus, trigger);
   }
   function requestClose() {
     flush();
@@ -199,23 +201,89 @@
   }
   function showConflict() {
     $("conflict").hidden = false;
-    say($("conflict"), "別のタブでこのメモが更新されました。入力欄はそのまま保持しています。共有する前に、保存したメモの「編集」で新しい内容を確認してください。ここで本文・種類・場面を編集すると、この入力内容を保存します。");
+    say($("conflict"), "別のタブでこのメモが更新されました。入力欄はそのまま保持しています。送る前に、保存したメモの「編集」で新しい内容を確認してください。ここで本文・種類・場面を編集すると、この入力内容を保存します。");
   }
-  function share() {
+  function leaveConfirmation(restore = true) {
+    const wasOpen = !$("confirm").hidden;
+    $("confirm").hidden = true;
+    $("editor").hidden = false;
+    $("list-area").hidden = false;
+    $("all-actions").hidden = false;
+    $("privacy").hidden = false;
+    $("footer").hidden = false;
+    if (restore && wasOpen) { $("dialog").querySelector(".notes-scroll").scrollTop = editorScroll; $("share").focus(); }
+    prepared = null; awaitingReturn = false;
+  }
+  function showConfirmation() {
     if (!draft?.body.trim()) return;
     flush();
-    // Do not rely on delivery of a storage event: check the durable record on every click.
+    // A storage event can arrive late; inspect the durable copy before taking a snapshot.
     if (!dirty && store.load()) {
       const latest = store.notes.find(note => note.id === draft.id);
       if (latest && !N.sameContent(latest, draft) && !dirty) {
         showConflict(); drawList(); setError();
-        say($("share-status"), "共有画面は開いていません。入力欄と別タブの保存内容が異なります。一覧の「編集」で内容を確認してから、もう一度「制作に送る」を押してください。");
+        say($("share-status"), "確認画面は開いていません。入力欄と別タブの保存内容が異なります。一覧の「編集」で内容を確認してください。");
         return;
       }
     }
     setError();
-    const handoff = N.clone(draft);
-    const payload = N.sharePayload(handoff);
+    const snapshot = N.clone(draft), version = gameVersion(), key = N.formKey(snapshot, version);
+    const previous = snapshot.share?.forms;
+    const id = previous?.key === key ? previous.submissionId : N.newSubmissionId();
+    const form = { key, submissionId: id, gameVersion: version,
+      preparedAt: previous?.key === key && previous.preparedAt ? previous.preparedAt : new Date().toISOString() };
+    prepared = { snapshot, form, payload: N.formPayload(snapshot, id, version),
+      durableAtConfirm: store.notes.find(note => note.id === snapshot.id) || null };
+    if (!dirty) {
+      const recorded = store.recordForm(snapshot, form);
+      if (recorded === "changed") { prepared = null; showConflict(); say($("share-status"), "メモが更新されました。送る内容をもう一度確認してください。"); return; }
+      if (recorded === "saved" && N.sameContent(draft, snapshot)) draft.share = store.notes.find(note => note.id === draft.id).share;
+      if (recorded === "error") setError();
+    } else {
+      draft.share = { ...draft.share, forms: { ...form, openedAt: previous?.key === key ? previous.openedAt || null : null, externalUrl: N.TARGET } };
+      memory.set(draft.id, N.clone(draft));
+    }
+    editorScroll = dialog.querySelector(".notes-scroll").scrollTop;
+    $("editor").hidden = true; $("list-area").hidden = true; $("all-actions").hidden = true;
+    $("privacy").hidden = true; $("footer").hidden = true;
+    $("confirm").hidden = false;
+    $("confirm-scene").textContent = snapshot.scene ? "場面あり。保存時のゲーム版と場面を添付します。" : "場面なし。本文と最小限の記録だけを送ります。";
+    $("confirm-mode").textContent = prepared.payload.long
+      ? "メモが長いため、自動入力せず全文を貼り付けます。「送る全文をコピー」してからフォームを開き、「送るメモ」に貼り付けてください。"
+      : "フォームの「送るメモ」に全文を事前入力します。内容を確認してから送信してください。";
+    $("confirm-text").value = prepared.payload.body;
+    $("confirm-status").textContent = store.error ? "端末への保存に失敗しています。このタブの全文は確認・コピー・書き出しできます。" : "";
+    dialog.querySelector(".notes-scroll").scrollTop = 0;
+    $("confirm-back").focus();
+  }
+  async function copyPrepared() {
+    if (!prepared) return;
+    const snapshot = prepared;
+    const ok = await copyText(snapshot.payload.body);
+    if (prepared === snapshot) say($("confirm-status"), ok
+      ? "送る全文をコピーしました。フォームの「送るメモ」に貼り付けてください。"
+      : "自動コピーできませんでした。下の全文を選択してコピーするか、書き出して残してください。");
+  }
+  function openForm() {
+    if (!prepared || openBusy) return;
+    if (!dirty) {
+      if (!store.load()) { setError(); say($("confirm-status"), "保存状態を確認できません。内容をもう一度確認してください。"); return; }
+      const latest = store.notes.find(note => note.id === prepared.snapshot.id);
+      if (!N.sameContent(latest, prepared.snapshot)) { showConflict(); say($("confirm-status"), "メモが更新されました。送る内容をもう一度確認してください。"); return; }
+    } else {
+      if (!N.sameContent(draft, prepared.snapshot)) {
+        say($("confirm-status"), "このタブのメモが更新されました。送る内容をもう一度確認してください。"); return;
+      }
+      if (store.load()) {
+        const latest = store.notes.find(note => note.id === prepared.snapshot.id) || null;
+        const prior = prepared.durableAtConfirm;
+        if ((prior || latest) && !N.sameContent(prior, latest)) {
+          showConflict(); say($("confirm-status"), "別のタブでメモが更新されました。送る内容をもう一度確認してください。"); return;
+        }
+      }
+    }
+    openBusy = true;
+    const { snapshot, form, payload } = prepared;
     // Synchronous user activation is retained; sever opener before leaving about:blank.
     let popup = null;
     try {
@@ -224,24 +292,24 @@
       popup.opener = null;
       popup.location.replace(payload.url);
       const openedAt = new Date().toISOString();
-      const recorded = dirty ? "unsaved" : store.recordHandoff(handoff, openedAt);
-      // Sharing never marks content dirty or feeds a stale editor into save().
-      if (N.sameContent(draft, handoff)) {
-        draft.share = { state: "handoff-opened", handoffOpenedAt: openedAt, externalUrl: N.TARGET };
+      const recorded = dirty ? "unsaved" : store.recordForm(snapshot, form, openedAt);
+      if (N.sameContent(draft, snapshot)) {
+        draft.share = { ...draft.share, forms: { ...form, openedAt, externalUrl: N.TARGET } };
         if (dirty) memory.set(draft.id, N.clone(draft));
       }
       if (recorded === "changed" && !dirty) showConflict();
       setError(); drawList();
-      say($("share-status"), `共有画面を開きました。GitHubで投稿を完了してください。${recorded === "changed" && !dirty ? "共有画面にはクリック時の入力内容を渡しました。その後に変わった端末の保存内容は変更していません。" : ""}${payload.long ? "メモが長いため本文は自動入力していません。全文をコピーまたはMarkdownで書き出し、貼り付けてください。" : ""}`);
+      awaitingReturn = true;
+      say($("confirm-status"), `フォームを開きました。フォームの「送信」を押して完了してください。送信できたかはフォームの完了画面で確認できます。${recorded === "changed" ? "別タブの更新があり、保存履歴は変更していません。" : ""}${recorded === "error" ? "端末の履歴を保存できませんでした。" : ""}`);
     } catch {
       try { popup?.close(); } catch { /* No note data is discarded if browser access fails. */ }
-      say($("share-status"), "共有画面を開けませんでした。メモは保持しています。コピーや書き出しで残し、もう一度お試しください。");
+      say($("confirm-status"), "フォームを開けませんでした。メモは保持しています。もう一度開くか、全文をコピー・書き出して残してください。");
     }
-    if (payload.long) copyText(payload.body);
+    setTimeout(() => { openBusy = false; }, 500);
   }
   trigger.addEventListener("click", event => {
     event.stopPropagation();
-    returnFocus = document.activeElement;
+    returnFocus = trigger;
     if (!draft) {
       const notes = store.notes;
       loadEditor(notes.find(note => note.id === store.data.activeNoteId) || notes[0] || null);
@@ -252,7 +320,8 @@
   dialog.addEventListener("click", event => event.stopPropagation());
   dialog.addEventListener("keydown", event => {
     event.stopPropagation();
-    if (event.key === "Escape") { event.preventDefault(); requestClose(); return; }
+    if (event.repeat && !$("confirm").hidden && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); return; }
+    if (event.key === "Escape") { event.preventDefault(); if (!$("confirm").hidden) leaveConfirmation(); else requestClose(); return; }
     if (event.key !== "Tab") return;
     const focusable = [...dialog.querySelectorAll('button, textarea, input, [tabindex="0"]')]
       .filter(item => !item.disabled && item.getClientRects().length && (item.type !== "radio" || item.checked));
@@ -260,8 +329,8 @@
     if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
     else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
   });
-  dialog.addEventListener("cancel", event => { event.preventDefault(); requestClose(); });
-  $("close").addEventListener("click", requestClose);
+  dialog.addEventListener("cancel", event => { event.preventDefault(); if (!$("confirm").hidden) leaveConfirmation(); else requestClose(); });
+  $("close").addEventListener("click", () => { if (!$("confirm").hidden) leaveConfirmation(); requestClose(); });
   $("new").addEventListener("click", () => { flush(); loadEditor(null); drawList(); body.focus(); });
   body.addEventListener("input", changed);
   document.querySelectorAll('[name="note-kind"]').forEach(radio => radio.addEventListener("change", changed));
@@ -283,9 +352,20 @@
   $("export-md").addEventListener("click", () => exportAll("md"));
   $("raw-copy").addEventListener("click", () => copyText(store.raw));
   $("raw-export").addEventListener("click", () => download(store.raw, "order3-notes-original.txt", "text/plain;charset=utf-8"));
-  $("share").addEventListener("click", share);
+  $("share").addEventListener("click", showConfirmation);
+  $("confirm-back").addEventListener("click", () => leaveConfirmation());
+  $("confirm-copy").addEventListener("click", copyPrepared);
+  $("confirm-export").addEventListener("click", () => { if (prepared) download(prepared.payload.body, `order3-send-${prepared.form.submissionId}.txt`, "text/plain;charset=utf-8"); });
+  $("form-open").addEventListener("click", openForm);
   window.addEventListener("pagehide", flush);
-  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") flush(); });
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") flush();
+    if (document.visibilityState === "visible" && awaitingReturn && !$("confirm").hidden) {
+      awaitingReturn = false;
+      say($("confirm-status"), "フォームで送信を完了しましたか。完了していなければ同じ内容で開き直せます。ゲーム側では送信結果を確認できません。");
+      $("form-open").focus();
+    }
+  });
   window.addEventListener("storage", event => {
     if (event.key !== N.KEY) return;
     store.receive(event.newValue);

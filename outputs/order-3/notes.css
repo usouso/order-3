@@ -29,6 +29,11 @@
 .notes-share-area { margin: 16px 0; padding-top: 16px; border-top: 1px solid var(--line); }
 .notes-dialog .notes-share { width: 100%; border-color: #cead76; color: #ffdfaa; background: #30291e; }
 .notes-share small { display: block; font-size: 11px; font-weight: normal; }
+.notes-confirm h3 { margin: 0 0 10px; }
+.notes-confirm label { display: block; margin: 12px 0 7px; }
+.notes-confirm .notes-actions { margin: 12px 0; }
+.notes-confirm .notes-share { width: 100%; border-color: #cead76; color: #ffdfaa; background: #30291e; font-weight: 700; }
+#notes-confirm-status { line-height: 1.6; }
 .notes-dialog .notes-save { color: #071819; background: var(--cyan); border-color: var(--cyan); font-weight: 700; }
 .notes-list { list-style: none; margin: 0 0 16px; padding: 0; }
 .notes-list li { padding: 12px 0; border-top: 1px solid var(--line); }
