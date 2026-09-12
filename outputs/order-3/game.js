@@ -1,5 +1,5 @@
 const SIZE = 6;
-const GAME_VERSION = "ACT 14b";
+const GAME_VERSION = "ACT 15";
 const SPEED_ORDER = { fast: 0, normal: 1, slow: 2 };
 const SPEED_LABEL = { fast: "FAST", normal: "NORMAL", slow: "SLOW" };
 const WALLS = [{ x: 2, y: 2 }, { x: 3, y: 3 }];
@@ -284,6 +284,20 @@ const game = {
   lastResolvedState: null
 };
 
+// Short-lived reading state, outside combat and opt-in note scenes.
+const movementUI = { battleGeneration: 0, queueGeneration: 0, open: new Set(), returnTo: null };
+
+function movementPlanToken() {
+  return `${movementUI.battleGeneration}:${game.turn}:${movementUI.queueGeneration}`;
+}
+
+function clearMovementReading(newPlan = false, newBattle = false) {
+  if (newBattle) movementUI.battleGeneration += 1;
+  if (newPlan) movementUI.queueGeneration += 1;
+  movementUI.open.clear();
+  movementUI.returnTo = null;
+}
+
 const el = {
   board: document.querySelector("#battlefield"),
   statusPopover: document.querySelector("#board-status-popover"),
@@ -334,6 +348,7 @@ function makeUnit(id, name, icon, side, hp, x, y, role) {
 }
 
 function resetGame() {
+  clearMovementReading(true, true);
   game.turn = 1;
   game.phase = "planning";
   game.units = makeUnits();
@@ -603,6 +618,7 @@ function intent(actor, id, name, speed, target, description, cells = [], options
 
 function selectCard(instanceId) {
   if (game.phase !== "planning" || game.queue.length >= 3) return;
+  clearMovementReading();
   game.selectedInstanceId = game.selectedInstanceId === instanceId ? null : instanceId;
   game.mode = "technique";
   game.moveUnitId = null;
@@ -621,6 +637,7 @@ function selectedDef() {
 
 function setMode(mode) {
   if (!selectedCard()) return;
+  clearMovementReading();
   game.mode = mode;
   game.moveUnitId = null;
   render();
@@ -811,12 +828,14 @@ function handleCellClick(x, y) {
 
   game.hand = game.hand.filter(item => item.instanceId !== card.instanceId);
   game.queue.push(action);
+  clearMovementReading(true);
   game.previewIndex = null;
   clearSelection();
   render();
 }
 
 function clearSelection() {
+  clearMovementReading();
   game.selectedInstanceId = null;
   game.mode = "technique";
   game.moveUnitId = null;
@@ -825,6 +844,7 @@ function clearSelection() {
 
 function undoLast() {
   if (game.phase !== "planning" || !game.queue.length) return;
+  clearMovementReading(true);
   const action = game.queue.pop();
   game.hand.push(action.instance);
   game.previewIndex = null;
@@ -887,7 +907,7 @@ function simBattleResult(state) {
   return null;
 }
 
-function simPathToAdjacent(state, mover, target) {
+function simPathToAdjacent(state, mover, target, evidence = null) {
   const startKey = keyOf(mover);
   const frontier = [{ x: mover.x, y: mover.y }];
   const cameFrom = new Map([[startKey, null]]);
@@ -897,19 +917,26 @@ function simPathToAdjacent(state, mover, target) {
     const current = frontier.shift();
     if (isOrthogonallyAdjacent(current, target)) {
       end = current;
+      if (evidence) evidence.pathResult = keyOf(current) === startKey ? "already_adjacent" : "found";
       break;
     }
     for (const next of neighbors(current)) {
       const nextKey = keyOf(next);
       if (cameFrom.has(nextKey) || isWall(next.x, next.y)) continue;
       const occupant = simUnitAt(state, next.x, next.y);
-      if (occupant && occupant.id !== mover.id) continue;
+      if (occupant && occupant.id !== mover.id) {
+        if (evidence && keyOf(current) === startKey) evidence.excluded.push({ unitId: occupant.id, x: next.x, y: next.y });
+        continue;
+      }
       cameFrom.set(nextKey, current);
       frontier.push(next);
     }
   }
 
-  if (!end) return [];
+  if (!end) {
+    if (evidence) evidence.pathResult = "no_path";
+    return [];
+  }
   const path = [];
   let current = end;
   while (current && keyOf(current) !== startKey) {
@@ -1006,18 +1033,49 @@ function simHealWithCharge(unit, amount, outcome) {
   return healed;
 }
 
-function simMoveToward(state, mover, target, steps, outcome) {
+function simMoveToward(state, mover, target, steps, outcome, evidence = null) {
   if (mover.rooted) {
+    if (evidence) evidence.movementEnd = "rooted";
     outcome.logs.push(`${mover.name}は縫い留められ、移動できない。`);
     return;
   }
-  const path = simPathToAdjacent(state, mover, target).slice(0, steps);
+  const path = simPathToAdjacent(state, mover, target, evidence).slice(0, steps);
+  if (evidence) {
+    evidence.plannedLength = path.length;
+    evidence.movementEnd = "complete";
+  }
   for (const cell of path) {
     if (mover.hp <= 0) break;
     mover.x = cell.x;
     mover.y = cell.y;
-    if (mover.side === "enemy" && simTriggerEmberRune(state, mover, outcome)) break;
+    if (evidence) evidence.entered.push({ x: cell.x, y: cell.y });
+    if (mover.side === "enemy" && simTriggerEmberRune(state, mover, outcome)) {
+      if (evidence) {
+        evidence.movementEnd = "trap";
+        evidence.trap = { x: cell.x, y: cell.y, remaining: path.length - evidence.entered.length };
+      }
+      break;
+    }
   }
+}
+
+// Optional, detached display facts. They never decide movement or damage.
+function startMovementEvidence(outcome, event, actor, target, limit, at, collect) {
+  if (!collect) return null;
+  const evidence = {
+    eventKey: event.key, actorId: actor.id, targetId: target.id,
+    start: { actor: { x: actor.x, y: actor.y }, target: { x: target.x, y: target.y } },
+    limit, excluded: [], plannedLength: null, entered: [], pathResult: null,
+    movementEnd: "not_requested", trap: null,
+    attack: { at, actorAlive: null, targetAlive: null, adjacent: null, performed: false }
+  };
+  outcome.movementEvidence = evidence;
+  return evidence;
+}
+
+function movementAttackCondition(evidence, condition, value) {
+  if (evidence) evidence.attack[condition] = value;
+  return value;
 }
 
 function cancelOutcome(outcome, reason) {
@@ -1164,7 +1222,7 @@ function resolveSimPlayer(state, event, context, outcome) {
   }
 }
 
-function resolveSimEnemy(state, event, outcome) {
+function resolveSimEnemy(state, event, outcome, collectMovement = false) {
   const enemyIntent = event.payload;
   const actor = simGetUnit(state, enemyIntent.actorId);
   if (!actor || actor.hp <= 0) return cancelOutcome(outcome, "行動者が戦闘不能");
@@ -1183,35 +1241,53 @@ function resolveSimEnemy(state, event, outcome) {
 
   const target = enemyIntent.targetId ? simGetUnit(state, enemyIntent.targetId) : null;
   switch (enemyIntent.id) {
-    case "stalk":
+    case "stalk": {
       if (!target || target.hp <= 0) return cancelOutcome(outcome, "対象が戦闘不能");
-      simMoveToward(state, actor, target, 2, outcome);
-      if (actor.hp > 0 && isOrthogonallyAdjacent(actor, target)) simDealDamage(state, target.id, 2, actor.id, { hostile: true, melee: true }, outcome);
+      const evidence = startMovementEvidence(outcome, event, actor, target, 2, "after_move", collectMovement);
+      simMoveToward(state, actor, target, 2, outcome, evidence);
+      if (movementAttackCondition(evidence, "actorAlive", actor.hp > 0) && movementAttackCondition(evidence, "adjacent", isOrthogonallyAdjacent(actor, target))) {
+        if (evidence) evidence.attack.performed = true;
+        simDealDamage(state, target.id, 2, actor.id, { hostile: true, melee: true }, outcome);
+      }
       return outcome;
-    case "pounce":
+    }
+    case "pounce": {
       if (!target || target.hp <= 0) return cancelOutcome(outcome, "対象が戦闘不能");
-      simMoveToward(state, actor, target, 3, outcome);
-      if (actor.hp > 0 && isOrthogonallyAdjacent(actor, target)) simDealDamage(state, target.id, 4, actor.id, { hostile: true, melee: true }, outcome);
+      const evidence = startMovementEvidence(outcome, event, actor, target, 3, "after_move", collectMovement);
+      simMoveToward(state, actor, target, 3, outcome, evidence);
+      if (movementAttackCondition(evidence, "actorAlive", actor.hp > 0) && movementAttackCondition(evidence, "adjacent", isOrthogonallyAdjacent(actor, target))) {
+        if (evidence) evidence.attack.performed = true;
+        simDealDamage(state, target.id, 4, actor.id, { hostile: true, melee: true }, outcome);
+      }
       else outcome.logs.push("追跡獣の飛びかかりは届かなかった。");
       return outcome;
-    case "recover":
+    }
+    case "recover": {
       if (!target || target.hp <= 0) return cancelOutcome(outcome, "対象が戦闘不能");
-      if (isOrthogonallyAdjacent(actor, target)) simDealDamage(state, target.id, 2, actor.id, { hostile: true, melee: true }, outcome);
-      else simMoveToward(state, actor, target, 1, outcome);
+      const evidence = startMovementEvidence(outcome, event, actor, target, 1, "start", collectMovement);
+      if (movementAttackCondition(evidence, "adjacent", isOrthogonallyAdjacent(actor, target))) {
+        if (evidence) evidence.attack.performed = true;
+        simDealDamage(state, target.id, 2, actor.id, { hostile: true, melee: true }, outcome);
+      }
+      else simMoveToward(state, actor, target, 1, outcome, evidence);
       return outcome;
+    }
     case "cover":
       if (!target || target.hp <= 0) return cancelOutcome(outcome, "庇護対象が戦闘不能");
       target.guard += 4;
       actor.coveringId = isOrthogonallyAdjacent(actor, target) ? target.id : null;
       return outcome;
-    case "shield_drive":
+    case "shield_drive": {
       if (!target || target.hp <= 0) return cancelOutcome(outcome, "対象が戦闘不能");
-      simMoveToward(state, actor, target, 1, outcome);
-      if (actor.hp > 0 && target.hp > 0 && isOrthogonallyAdjacent(actor, target)) {
+      const evidence = startMovementEvidence(outcome, event, actor, target, 1, "after_move", collectMovement);
+      simMoveToward(state, actor, target, 1, outcome, evidence);
+      if (movementAttackCondition(evidence, "actorAlive", actor.hp > 0) && movementAttackCondition(evidence, "targetAlive", target.hp > 0) && movementAttackCondition(evidence, "adjacent", isOrthogonallyAdjacent(actor, target))) {
+        if (evidence) evidence.attack.performed = true;
         simDealDamage(state, target.id, 3, actor.id, { hostile: true, melee: true }, outcome);
         if (target.hp > 0 && !simConsumeWard(target, "露出", outcome)) target.exposed = true;
       }
       return outcome;
+    }
     case "brace":
       actor.guard += 6;
       actor.counter = 4;
@@ -1421,7 +1497,7 @@ function summarizeStructuredChanges(groups) {
   return groups.length > 2 ? `${shown} / ＋他${groups.length - 2}種` : shown;
 }
 
-function predictTimeline(events = buildResolutionEvents(), eventLimit = events.length) {
+function predictTimeline(events = buildResolutionEvents(), eventLimit = events.length, collectMovement = true) {
   const state = cloneCombatState(game);
   const snapshots = [];
   for (let index = 0; index < Math.min(eventLimit, events.length); index += 1) {
@@ -1430,7 +1506,7 @@ function predictTimeline(events = buildResolutionEvents(), eventLimit = events.l
     const outcome = { status: "resolved", reason: "", logs: [] };
     if (simBattleResult(state)) cancelOutcome(outcome, "戦闘終了");
     else if (event.kind === "player") resolveSimPlayer(state, event, { events, index }, outcome);
-    else resolveSimEnemy(state, event, outcome);
+    else resolveSimEnemy(state, event, outcome, collectMovement);
     outcome.groups = buildStructuredChanges(before, state, outcome, event);
     outcome.summary = summarizeStructuredChanges(outcome.groups);
     outcome.details = outcome.groups.flatMap(group => group.details);
@@ -1517,6 +1593,7 @@ function applyCombatState(state) {
 
 async function executeTurn() {
   if (game.phase !== "planning" || !game.queue.length) return;
+  clearMovementReading(true);
   const forecast = predictTimeline();
   game.activeForecast = forecast;
   game.phase = "resolving";
@@ -1547,6 +1624,7 @@ async function executeTurn() {
 
   endTurnCleanup();
   game.turn += 1;
+  clearMovementReading(true);
   game.timelineCursor = -1;
   game.previewIndex = null;
   game.activeForecast = null;
@@ -1966,6 +2044,7 @@ function battleResult() {
 }
 
 function finishBattle(result) {
+  clearMovementReading(true);
   game.phase = "ended";
   render();
   if (result === "victory") {
@@ -2528,6 +2607,133 @@ function renderTimeline() {
     : `<span>生存中の味方全員に命令あり</span>`;
 }
 
+function movementPositionOrigin(forecast, index, occupied) {
+  const isHere = unit => Boolean(unit && unit.hp > 0 && unit.x === occupied.x && unit.y === occupied.y);
+  // Walk back only while this same living unit continuously occupies the cell.
+  for (let prior = index - 1; prior >= 0; prior -= 1) {
+    const after = simGetUnit(forecast.snapshots[prior].state, occupied.unitId);
+    if (!isHere(after)) return null;
+    const before = simGetUnit(prior ? forecast.snapshots[prior - 1].state : forecast.initial, occupied.unitId);
+    if (!before || before.hp <= 0) return null;
+    if (before.x !== after.x || before.y !== after.y) {
+      return { kind: "event", index: prior, eventKey: forecast.events[prior].key };
+    }
+  }
+  return isHere(simGetUnit(forecast.initial, occupied.unitId)) ? { kind: "initial" } : null;
+}
+
+function movementEventLabel(forecast, index) {
+  const event = forecast.events[index];
+  const view = timelineEventView(event);
+  return `${String(index + 1).padStart(2, "0")} ${view.name}「${view.action}」`;
+}
+
+function renderMovementEvidence(forecast, index) {
+  if (game.phase !== "planning" || game.selectedInstanceId || !game.queue.length) return "";
+  const evidence = forecast?.snapshots[index]?.outcome?.movementEvidence;
+  if (!evidence || evidence.eventKey !== forecast.events[index]?.key) return "";
+  const token = movementPlanToken();
+  const disclosure = `${token}:${evidence.eventKey}`;
+  const name = id => escapeEffectText(simGetUnit(forecast.initial, id)?.name || id);
+  const point = cell => `(${cell.x + 1},${cell.y + 1})`;
+  const occupied = evidence.excluded.map((cell, ordinal) => {
+    const origin = movementPositionOrigin(forecast, index, cell);
+    const link = origin?.kind === "event"
+      ? `<button type="button" class="movement-link" data-movement-origin="${ordinal}" data-related-key="${escapeEffectText(origin.eventKey)}">${escapeEffectText(movementEventLabel(forecast, origin.index))}でこの位置へ</button>`
+      : origin?.kind === "initial" ? `<span class="movement-origin-note">ターン開始時からこの位置</span>` : "";
+    return `<li>${point(cell)} ${name(cell.unitId)}が占有${link}</li>`;
+  }).join("");
+  let end = "";
+  if (evidence.movementEnd === "rooted") end = "<p>移動不能により移動処理を終了。経路は探索していません。</p>";
+  else if (evidence.pathResult === "no_path") end = "<p>対象に上下左右で隣接する位置への経路が見つからず、移動なし。</p>";
+  else if (evidence.pathResult === "already_adjacent") end = "<p>開始時から対象と上下左右に隣接しており、移動なし。</p>";
+  else if (evidence.movementEnd === "not_requested") end = "<p>開始時の判定で攻撃を選び、移動処理は行いませんでした。</p>";
+  const attack = evidence.attack;
+  let attackText = "";
+  let rule = "";
+  if (attack.at === "start") {
+    attackText = attack.performed ? "開始時に対象と上下左右に隣接し、攻撃あり。" : "開始時は対象と上下左右に隣接せず、移動を選択。移動後の攻撃判定はありません。";
+    if (!attack.performed) rule = "<p class=\"movement-rule\">効果の規則：この技は離れて始めた場合、移動後には攻撃しません。</p>";
+  } else if (attack.actorAlive === false) attackText = "行動者が戦闘不能で攻撃なし。後続の攻撃条件は未評価。";
+  else if (attack.targetAlive === false) attackText = "対象が戦闘不能で攻撃なし。隣接条件は未評価。";
+  else if (attack.performed) attackText = "移動後に対象と上下左右に隣接し、攻撃あり。装甲などを適用した結果は上の予測結果に表示します。";
+  else if (attack.adjacent === false) attackText = `移動後は${name(evidence.targetId)}と上下左右に隣接せず、攻撃なし。`;
+  return `<details class="movement-evidence" data-movement-disclosure="${escapeEffectText(disclosure)}" data-movement-plan="${token}"${movementUI.open.has(disclosure) ? " open" : ""}>
+    <summary>この計画の移動経過 — ${escapeEffectText(movementEventLabel(forecast, index))}</summary>
+    <div class="movement-body">
+      <p>開始時：${name(evidence.actorId)}${point(evidence.start.actor)} → 対象${name(evidence.targetId)}${point(evidence.start.target)}</p>
+      ${occupied ? `<p>開始位置に隣接する通れないマス（占有による除外）：</p><ul>${occupied}</ul>` : ""}
+      ${evidence.plannedLength !== null ? `<p>この移動の予定：${evidence.plannedLength}マス（移動上限${evidence.limit}マス適用後）。</p>` : ""}
+      <p>実際の移動：${[evidence.start.actor, ...evidence.entered].map(point).join(" → ")}${!evidence.entered.length ? "（進入なし）" : ""}</p>
+      ${end}
+      ${evidence.trap ? `<p>${point(evidence.trap)}で火種の罠が発動。この移動の予定残りは${evidence.trap.remaining}マス。</p>` : ""}
+      ${attackText ? `<p>${attackText}</p>` : ""}${rule}
+    </div>
+  </details>`;
+}
+
+function movementNavigationContext(token, forecast) {
+  if (token !== movementPlanToken() || game.phase !== "planning" || game.selectedInstanceId || !game.queue.length) return null;
+  return forecast || null;
+}
+
+function bindMovementNavigation(forecast, index) {
+  const token = movementPlanToken();
+  const fromKey = forecast?.events[index]?.key;
+  const details = el.timelineDetail.querySelector?.(".movement-evidence");
+  details?.addEventListener("toggle", () => {
+    if (!details.isConnected || details.dataset.movementPlan !== movementPlanToken()) return;
+    const key = details.dataset.movementDisclosure;
+    if (details.open) movementUI.open.add(key);
+    else movementUI.open.delete(key);
+  });
+  for (const button of el.timelineDetail.querySelectorAll?.("[data-related-key]") || []) {
+    button.addEventListener("click", event => {
+      event.stopPropagation();
+      const current = movementNavigationContext(token, forecast);
+      if (!button.isConnected || !current || current.events[game.previewIndex]?.key !== fromKey) return;
+      const fromIndex = current.events.findIndex(item => item.key === fromKey);
+      const evidence = current.snapshots[fromIndex]?.outcome?.movementEvidence;
+      const occupied = evidence?.excluded[Number(button.dataset.movementOrigin)];
+      const origin = occupied && movementPositionOrigin(current, fromIndex, occupied);
+      if (origin?.kind !== "event" || origin.eventKey !== button.dataset.relatedKey) return;
+      movementUI.open.add(`${token}:${fromKey}`);
+      movementUI.returnTo = { token, fromKey, toKey: origin.eventKey, ordinal: Number(button.dataset.movementOrigin) };
+      game.previewIndex = origin.index;
+      render();
+      const heading = el.timelineDetail.querySelector?.("#timeline-detail-heading");
+      heading?.focus();
+      heading?.scrollIntoView({ block: "nearest" });
+    });
+  }
+  const back = el.timelineDetail.querySelector?.("[data-movement-return]");
+  back?.addEventListener("click", event => {
+    event.stopPropagation();
+    const current = movementNavigationContext(token, forecast), saved = movementUI.returnTo;
+    if (!back.isConnected || !current || saved?.token !== token || current.events[game.previewIndex]?.key !== saved.toKey) return;
+    const destination = current.events.findIndex(item => item.key === saved.fromKey);
+    if (destination < 0 || !current.snapshots[destination]?.outcome?.movementEvidence) {
+      movementUI.returnTo = null;
+      return;
+    }
+    game.previewIndex = destination;
+    movementUI.returnTo = null;
+    movementUI.open.add(`${token}:${saved.fromKey}`);
+    render();
+    const origin = el.timelineDetail.querySelector?.(`[data-movement-origin="${saved.ordinal}"]`) || el.timelineDetail.querySelector?.(".movement-evidence > summary");
+    origin?.focus();
+    origin?.scrollIntoView({ block: "nearest" });
+  });
+}
+
+function renderMovementReturn(forecast, index) {
+  const saved = movementUI.returnTo;
+  if (!saved || !movementNavigationContext(saved.token, forecast) || forecast.events[index]?.key !== saved.toKey) return "";
+  const fromIndex = forecast.events.findIndex(item => item.key === saved.fromKey);
+  if (fromIndex < 0) return "";
+  return `<button type="button" class="movement-link movement-return" data-movement-return>${escapeEffectText(movementEventLabel(forecast, fromIndex))}へ戻る</button>`;
+}
+
 function renderTimelineDetail(selection, forecast, events) {
   if (selection) {
     el.timelineDetail.hidden = false;
@@ -2550,7 +2756,8 @@ function renderTimelineDetail(selection, forecast, events) {
   const view = timelineEventView(event);
   el.timelineDetail.hidden = false;
   el.timelineDetail.innerHTML = `
-    <div class="timeline-detail-title"><span>${view.name}｜${view.action}</span><b>${outcome ? "行動直後" : "効果説明"}</b></div>
+    <div class="timeline-detail-title" id="timeline-detail-heading" tabindex="-1"><span>TURN ${String(game.turn).padStart(2, "0")} · ${String(detailIndex + 1).padStart(2, "0")} ${view.name}｜${view.action}</span><b>${outcome ? (game.phase === "planning" ? "現在計画の予測・行動直後" : "実行・行動直後") : "効果説明"}</b></div>
+    ${renderMovementReturn(forecast, detailIndex)}
     ${renderEffectDetails(effectIdForEvent(event), "timeline")}
     <h4 class="prediction-title">この計画の予測結果</h4>
     ${!outcome ? `<p>命令を登録すると予測結果を表示します。${effectIdForEvent(event) === "drain" ? "回復先は実行時に決定します。" : ""}</p>` : ""}
@@ -2562,8 +2769,10 @@ function renderTimelineDetail(selection, forecast, events) {
         </section>
       `).join("")}
     </div>
+    ${renderMovementEvidence(forecast, detailIndex)}
     ${outcome?.logs.length ? `<details class="outcome-logs"><summary>発動・無効・取消を含む経過</summary>${outcome.logs.map(log => `<p>${escapeEffectText(log)}</p>`).join("")}</details>` : ""}
   `;
+  bindMovementNavigation(forecast, detailIndex);
 }
 
 function timelineEventView(event) {
