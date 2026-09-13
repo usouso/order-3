@@ -558,6 +558,20 @@ h2 { margin: 3px 0 0; font-size: 17px; letter-spacing: .04em; }
   .mode-bar p { margin: 0 0 0 5px; color: var(--muted); font-size: 10px; }
 
 .hand { display: grid; grid-template-columns: repeat(5, minmax(135px, 1fr)); gap: 10px; min-height: 150px; }
+.actor-picker { margin: 0 0 12px; padding: 10px; border: 1px solid var(--line); border-radius: 5px; background: rgba(78,214,200,.045); }
+.actor-picker .kicker { margin: 0 0 8px; }
+.actor-strip { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.actor-strip button, .actor-options button { min-height: 44px; padding: 8px; border: 1px solid var(--line); border-radius: 4px; color: var(--ink); background: #182936; text-align: left; cursor: pointer; }
+.actor-strip button[aria-pressed="true"], .actor-options button[aria-pressed="true"] { border-color: var(--cyan); background: #214044; }
+.actor-strip button:disabled, .actor-options button:disabled { opacity: .58; cursor: default; }
+.actor-strip strong, .actor-strip small, .actor-options strong, .actor-options small { display: block; }
+.actor-strip small, .actor-options small { color: var(--muted); line-height: 1.45; }
+.actor-status { min-height: 18px; margin: 8px 0 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.actor-explain { margin: 3px 0 0; color: var(--muted); font-size: 11px; line-height: 1.45; }
+.actor-options { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 8px; margin-top: 8px; }
+.actor-options:empty { display: none; }
+.actor-options button.no-target { border-style: dashed; }
+.actor-options .actor-note { grid-column: 1 / -1; margin: 0; color: var(--muted); font-size: 12px; }
 .card {
   position: relative;
   display: flex;
@@ -782,6 +796,8 @@ h2 { margin: 3px 0 0; font-size: 17px; letter-spacing: .04em; }
     padding: 5px 0 10px;
   }
   .card { width: 100%; min-width: 0; }
+  .actor-strip { grid-template-columns: minmax(0, 1fr); }
+  .actor-options { grid-template-columns: minmax(0, 1fr); }
 }
 
 @media (forced-colors: active) {

@@ -37,7 +37,7 @@
         <div id="board-status-popover" class="board-status-popover"
              aria-hidden="true" hidden></div>
         <div class="board-footer">
-          <p id="instruction">カードを選び、対象を指定してください。</p>
+          <p id="instruction" tabindex="-1">味方か手札を選び、対象を指定してください。</p>
           <button id="cancel-selection" class="text-button" hidden>選択解除</button>
         </div>
       </div>
@@ -95,6 +95,14 @@
         </div>
       </div>
 
+      <div class="actor-picker" aria-labelledby="actor-picker-title">
+        <p id="actor-picker-title" class="kicker">味方を選ぶ · このキャラの命令</p>
+        <div id="actor-strip" class="actor-strip" role="group" aria-label="命令する味方"></div>
+        <p id="actor-status" class="actor-status" role="status" aria-live="polite" tabindex="-1"></p>
+        <p class="actor-explain">「対象あり」は今の計画で指定可能という意味です。実行時の発動成功は保証しません。</p>
+        <div id="actor-options" class="actor-options" aria-label="選んだ味方の命令"></div>
+      </div>
+
       <div id="mode-bar" class="mode-bar" hidden>
         <button id="technique-mode" class="mode-button active">固有技として使う</button>
         <button id="move-mode" class="mode-button">移動命令に変換</button>
@@ -125,7 +133,7 @@
       <h2 id="modal-title">3枚で、戦況を組み替えろ。</h2>
       <div id="modal-body" class="modal-body">
         <div class="brief-step"><b>1</b><span>戦場右の実行順で、敵味方の行動と速度を確認。</span></div>
-        <div class="brief-step"><b>2</b><span>カードを選び、盤面上の対象をクリック。</span></div>
+        <div class="brief-step"><b>2</b><span>味方を選び、そのキャラのカードと対象を選ぶ。手札から直接選んでもOK。</span></div>
         <div class="brief-step"><b>3</b><span>命令を最大3枚並べて「作戦実行」。</span></div>
         <p>どのカードも「味方を1マス動かす」命令に変換できます。</p>
       </div>

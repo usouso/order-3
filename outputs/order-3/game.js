@@ -1,5 +1,5 @@
 const SIZE = 6;
-const GAME_VERSION = "ACT 17";
+const GAME_VERSION = "ACT 18";
 const SPEED_ORDER = { fast: 0, normal: 1, slow: 2 };
 const SPEED_LABEL = { fast: "FAST", normal: "NORMAL", slow: "SLOW" };
 const WALLS = [{ x: 2, y: 2 }, { x: 3, y: 3 }];
@@ -302,6 +302,9 @@ const el = {
   board: document.querySelector("#battlefield"),
   statusPopover: document.querySelector("#board-status-popover"),
   hand: document.querySelector("#hand"),
+  actorStrip: document.querySelector("#actor-strip"),
+  actorOptions: document.querySelector("#actor-options"),
+  actorStatus: document.querySelector("#actor-status"),
   intents: document.querySelector("#intent-list"),
   squad: document.querySelector("#squad-list"),
   log: document.querySelector("#combat-log"),
@@ -332,6 +335,11 @@ const el = {
   help: document.querySelector("#help-button")
 };
 
+// Character-first navigation is display state; it never enters game, the queue, or the resolver.
+let activeActorId = null;
+let actorChoice = null; // null, technique, alt-pick, or alt-target
+function clearActorView() { activeActorId = null; actorChoice = null; }
+
 function makeUnits() {
   return [
     makeUnit("rook", "ルーク", "R", "player", 11, 1, 4, "前衛"),
@@ -354,6 +362,7 @@ function makeUnit(id, name, icon, side, hp, x, y, role) {
 
 function resetGame() {
   clearMovementReading(true, true);
+  clearActorView();
   game.turn = 1;
   game.phase = "planning";
   game.units = makeUnits();
@@ -621,12 +630,13 @@ function intent(actor, id, name, speed, target, description, cells = [], options
   return { actorId: actor.id, id, name, speed, targetId: target?.id || null, description, cells, ...options };
 }
 
-function selectCard(instanceId) {
+function selectCard(instanceId, fromActor = false, moveActorId = null) {
   if (game.phase !== "planning" || game.queue.length >= 3) return;
   clearMovementReading();
-  game.selectedInstanceId = game.selectedInstanceId === instanceId ? null : instanceId;
-  game.mode = "technique";
-  game.moveUnitId = null;
+  if (!fromActor) clearActorView();
+  game.selectedInstanceId = game.selectedInstanceId === instanceId && !moveActorId ? null : instanceId;
+  game.mode = moveActorId ? "move" : "technique";
+  game.moveUnitId = moveActorId;
   game.previewIndex = null;
   render();
 }
@@ -643,6 +653,7 @@ function selectedDef() {
 function setMode(mode) {
   if (!selectedCard()) return;
   clearMovementReading();
+  if (activeActorId) clearActorView();
   game.mode = mode;
   game.moveUnitId = null;
   render();
@@ -654,16 +665,17 @@ function getLegacy(ownerId) {
   return { name: "遺志：残響", text: effectCatalog.legacy_iona.short, target: "ally", speed: "fast", categories: ["defense"] };
 }
 
-function provisionalActionForSelection() {
-  const card = selectedCard();
-  const def = selectedDef();
+function provisionalActionForSelection(providedSelection = null) {
+  const selection = providedSelection || { card: selectedCard(), mode: game.mode, moveUnitId: game.moveUnitId };
+  const card = selection.card;
+  const def = card && cardDefs[card.cardId];
   if (!card || !def || game.phase !== "planning") return null;
   const liveOwner = getUnit(def.ownerId);
   const legacy = !liveOwner || liveOwner.hp <= 0;
-  if (game.mode === "move") {
+  if (selection.mode === "move") {
     return {
-      instance: card, cardId: card.cardId, mode: "move", actorId: game.moveUnitId,
-      target: null, speed: "fast", label: `${game.moveUnitId ? getUnit(game.moveUnitId)?.name : "味方"}：移動`,
+      instance: card, cardId: card.cardId, mode: "move", actorId: selection.moveUnitId,
+      target: null, speed: "fast", label: `${selection.moveUnitId ? getUnit(selection.moveUnitId)?.name : "味方"}：移動`,
       provisional: true
     };
   }
@@ -681,8 +693,8 @@ function provisionalActionForSelection() {
   };
 }
 
-function selectionTimelineContext() {
-  const action = provisionalActionForSelection();
+function selectionTimelineContext(providedSelection = null) {
+  const action = provisionalActionForSelection(providedSelection);
   if (!action) return null;
   const events = buildResolutionEvents([...game.queue, action]);
   const eventIndex = events.findIndex(event => event.kind === "player" && event.payload === action);
@@ -703,18 +715,19 @@ function displayTimelineState() {
   return selectedForecastState();
 }
 
-function validCells(providedContext = null) {
-  const card = selectedCard();
-  const def = selectedDef();
+function validCells(providedContext = null, providedSelection = null) {
+  const selection = providedSelection || { card: selectedCard(), mode: game.mode, moveUnitId: game.moveUnitId };
+  const card = selection.card;
+  const def = card && cardDefs[card.cardId];
   if (!card || !def || game.phase !== "planning") return [];
 
-  const context = providedContext || selectionTimelineContext();
+  const context = providedContext || selectionTimelineContext(selection);
   const state = context?.state;
   if (!state) return [];
 
-  if (game.mode === "move") {
-    if (!game.moveUnitId) return simLiving(state, "player").map(unit => ({ x: unit.x, y: unit.y }));
-    const mover = simGetUnit(state, game.moveUnitId);
+  if (selection.mode === "move") {
+    if (!selection.moveUnitId) return simLiving(state, "player").map(unit => ({ x: unit.x, y: unit.y }));
+    const mover = simGetUnit(state, selection.moveUnitId);
     if (!mover || mover.hp <= 0) return [];
     return neighbors(mover).filter(cell => simIsEmpty(state, cell.x, cell.y));
   }
@@ -788,10 +801,145 @@ function firstPriorDefeatEvent(context, unitId, startingHp) {
   return null;
 }
 
+function chooseActor(unitId) {
+  const unit = getUnit(unitId);
+  if (game.phase !== "planning" || !unit || unit.side !== "player" || unit.hp <= 0) return;
+  if (selectedCard()) clearSelection();
+  activeActorId = unitId;
+  actorChoice = null;
+  render();
+  el.actorStrip.querySelector(`[data-actor-id="${unitId}"]`)?.focus({ preventScroll: true });
+}
+
+function actorTechniqueCandidate(card) {
+  const selection = { card, mode: "technique", moveUnitId: null };
+  const context = selectionTimelineContext(selection);
+  const targets = validCells(context, selection);
+  if (targets.length) return { targets, reason: "登録可能な対象あり" };
+  const def = cardDefs[card.cardId];
+  const owner = getUnit(def.ownerId);
+  const before = context && simGetUnit(context.state, def.ownerId);
+  if (owner?.hp > 0 && (!before || before.hp <= 0)) {
+    const defeat = firstPriorDefeatEvent(context, def.ownerId, owner.hp);
+    return { targets, reason: defeat
+      ? `この命令の直前、先行する${SPEED_LABEL[defeat.speed]}の行動で戦闘不能です。`
+      : "この命令の直前に戦闘不能です。" };
+  }
+  return { targets, reason: context
+    ? unavailableTechniqueTargetReason(context, def, before, false)
+    : "この命令の直前は対象がありません。" };
+}
+
+function actorMoveCandidate(unitId) {
+  if (!game.hand.length) return { targets: [], reason: "消費するカードが手札にありません。" };
+  const selection = { card: game.hand[0], mode: "move", moveUnitId: unitId };
+  const context = selectionTimelineContext(selection);
+  const mover = context && simGetUnit(context.state, unitId);
+  if (!mover || mover.hp <= 0) return { targets: [], reason: "この命令のFAST時点で戦闘不能です。" };
+  const targets = validCells(context, selection);
+  return { targets, reason: targets.length ? "FAST時点で隣接する空きマスあり" : "この命令のFAST時点に隣接する空きマスがありません。" };
+}
+
+function renderActorPanel() {
+  if (game.phase !== "planning") clearActorView();
+  el.actorStrip.innerHTML = "";
+  el.actorOptions.innerHTML = "";
+  const full = game.queue.length >= 3;
+  for (const ownerId of ["rook", "vale", "iona"]) {
+    const unit = getUnit(ownerId);
+    const count = game.hand.filter(card => cardDefs[card.cardId].ownerId === ownerId).length;
+    const button = document.createElement("button");
+    button.type = "button";
+    button.dataset.actorId = ownerId;
+    button.setAttribute("aria-pressed", String(activeActorId === ownerId));
+    button.disabled = game.phase !== "planning" || unit.hp <= 0;
+    button.innerHTML = `<strong>${unit.name}</strong><small>${unit.role} · 実HP ${unit.hp}/${unit.maxHp} · 固有カード ${count}枚</small>`;
+    button.setAttribute("aria-label", `${unit.name}、${unit.role}、実HP ${unit.hp}/${unit.maxHp}、手札の固有カード ${count}枚、${activeActorId === ownerId ? "選択中" : "選択する"}、残り${3 - game.queue.length}命令`);
+    button.addEventListener("click", () => chooseActor(ownerId));
+    el.actorStrip.appendChild(button);
+  }
+  const actor = activeActorId && getUnit(activeActorId);
+  if (!actor || actor.hp <= 0 || game.phase !== "planning") {
+    if (el.actorStatus.textContent !== "味方か手札を選んでください。") el.actorStatus.textContent = "味方か手札を選んでください。";
+    return;
+  }
+  const owned = game.hand.filter(card => cardDefs[card.cardId].ownerId === actor.id);
+  const status = `${actor.name}を選択中。残り${3 - game.queue.length}命令。この命令の直前で対象を判定します。${full ? "命令枠が満杯です。1手戻すか作戦実行してください。" : ""}`;
+  if (el.actorStatus.textContent !== status) el.actorStatus.textContent = status;
+  if (!owned.length && actorChoice !== "alt-pick") {
+    const empty = document.createElement("p");
+    empty.className = "actor-note";
+    empty.textContent = "このキャラの固有技は手札にありません。ALTなら別のカードを消費できます。";
+    el.actorOptions.appendChild(empty);
+  }
+  if (actorChoice !== "alt-pick") for (const card of owned) {
+    const def = cardDefs[card.cardId];
+    const result = full ? { targets: [], reason: "残り命令枠がありません。" } : actorTechniqueCandidate(card);
+    const button = document.createElement("button");
+    button.type = "button";
+    button.dataset.actorCard = card.instanceId;
+    button.setAttribute("aria-pressed", String(game.selectedInstanceId === card.instanceId && game.mode === "technique"));
+    button.className = result.targets.length ? "" : "no-target";
+    button.disabled = full;
+    button.innerHTML = `<strong>${def.name}</strong><small>${SPEED_LABEL[def.speed]} · ${cardCategorySummary(def)} · 対象: ${def.target === "self" ? "自身" : def.target === "enemy" ? "敵" : def.target === "empty" ? "空きマス" : "味方"}</small>`;
+    const reason = document.createElement("small");
+    reason.textContent = `${result.reason}${result.targets.length ? `（${result.targets.length}候補）` : " 手札のカードから効果詳細を確認できます。"}`;
+    button.appendChild(reason);
+    button.setAttribute("aria-label", `${actor.name}の${def.name}、${SPEED_LABEL[def.speed]}、${cardCategorySummary(def)}。${result.reason}。残り${3 - game.queue.length}命令`);
+    button.addEventListener("click", () => {
+      actorChoice = "technique";
+      selectCard(card.instanceId, true);
+      if (!selectedCard()) { actorChoice = null; render(); }
+      el.instruction.focus({ preventScroll: false });
+    });
+    el.actorOptions.appendChild(button);
+  }
+  if (actorChoice === "alt-pick") {
+    const note = document.createElement("p");
+    note.className = "actor-note";
+    note.textContent = "消費するカードを選択。このカードの固有技／遺志は使わず、移動に変換します。";
+    el.actorOptions.appendChild(note);
+    for (const card of game.hand) {
+      const def = cardDefs[card.cardId];
+      const owner = getUnit(def.ownerId);
+      const shown = owner.hp > 0 ? def : getLegacy(def.ownerId);
+      const button = document.createElement("button");
+      button.type = "button";
+      button.dataset.altCard = card.instanceId;
+      button.textContent = `${owner.name}の${shown.name}を消費 → ${actor.name}を1マス移動`;
+      button.addEventListener("click", () => {
+        actorChoice = "alt-target";
+        selectCard(card.instanceId, true, actor.id);
+        el.instruction.focus({ preventScroll: false });
+      });
+      el.actorOptions.appendChild(button);
+    }
+  } else {
+    const move = full ? { targets: [], reason: "残り命令枠がありません。" } : actorMoveCandidate(actor.id);
+    const button = document.createElement("button");
+    button.type = "button";
+    button.id = "actor-alt";
+    button.disabled = full || !move.targets.length;
+    button.innerHTML = `<strong>1マス移動（ALT）</strong><small>${move.reason}。消費するカードは次に選びます。</small>`;
+    button.setAttribute("aria-label", `${actor.name}を1マス移動、${move.reason}、残り${3 - game.queue.length}命令`);
+    button.addEventListener("click", () => {
+      actorChoice = "alt-pick";
+      render();
+      el.actorStatus.focus({ preventScroll: false });
+    });
+    el.actorOptions.appendChild(button);
+  }
+}
+
 function handleCellClick(x, y) {
   const card = selectedCard();
   const def = selectedDef();
-  if (!card || !def || game.phase !== "planning") return;
+  if (game.phase !== "planning") return;
+  if (!card || !def) {
+    const unit = previewDisplayUnitAt(timelineDisplayContext().state, x, y);
+    if (unit?.side === "player") chooseActor(unit.id);
+    return;
+  }
   const valid = new Set(validCells().map(keyOf));
   if (!valid.has(`${x},${y}`)) return;
 
@@ -836,7 +984,9 @@ function handleCellClick(x, y) {
   clearMovementReading(true);
   game.previewIndex = null;
   clearSelection();
+  actorChoice = null;
   render();
+  if (activeActorId) el.actorStrip.querySelector(`[data-actor-id="${activeActorId}"]`)?.focus({ preventScroll: true });
 }
 
 function clearSelection() {
@@ -854,6 +1004,7 @@ function undoLast() {
   game.hand.push(action.instance);
   game.previewIndex = null;
   clearSelection();
+  actorChoice = null;
   render();
 }
 
@@ -2078,6 +2229,7 @@ function pause(ms) {
 function render() {
   renderBoard();
   renderHand();
+  renderActorPanel();
   renderIntents();
   renderSquad();
   renderQueue();
@@ -2222,6 +2374,9 @@ function renderBoard() {
         const projected = isPreview || hasMoved;
         const statuses = activeStatusEntries(unit);
         cell.setAttribute("aria-label", unitCellAriaLabel(unit, actual, projected, x, y, statuses));
+        if (game.phase === "planning" && !selectedCard() && unit.side === "player" && actual?.hp > 0) {
+          cell.setAttribute("aria-label", `${cell.getAttribute("aria-label")}。選ぶと${unit.name}の命令を表示。対象判定はこの命令の直前。`);
+        }
         const token = renderUnit(unit, projected, actual, statuses);
         cell.appendChild(token);
         const auxiliary = auxiliaryStatusDetails(unit);
@@ -2235,6 +2390,10 @@ function renderBoard() {
           cell.addEventListener("focus", () => showStatusPopover(unit));
           cell.addEventListener("blur", () => restorePinnedStatusPopover());
         }
+      }
+      if (valid.has(`${x},${y}`) && selectedCard()) {
+        const prompt = game.mode === "move" ? (game.moveUnitId ? "移動先" : "動かす味方") : "技の対象";
+        cell.setAttribute("aria-label", `${cell.getAttribute("aria-label")}。${prompt}として指定できます。`);
       }
       cell.addEventListener("click", () => handleCellClick(x, y));
       el.board.appendChild(cell);
@@ -2590,6 +2749,7 @@ function renderTimeline() {
       const baseForecast = currentForecast() || predictTimeline(buildResolutionEvents());
       const baseIndex = baseForecast.events.findIndex(item => item.key === event.key);
       clearSelection();
+      actorChoice = null;
       game.previewIndex = baseIndex >= 0 ? baseIndex : null;
       render();
       el.timeline.querySelector?.(`[data-event-key="${event.key}"]`)?.focus({ preventScroll: true });
@@ -2836,7 +2996,11 @@ function renderControls() {
   el.execute.disabled = game.phase !== "planning" || !game.queue.length;
 
   if (!selectionActive) {
-    el.instruction.textContent = game.phase === "resolving"
+    el.instruction.textContent = activeActorId && game.phase === "planning"
+      ? actorChoice === "alt-pick"
+        ? `${getUnit(activeActorId).name}を移動させるカードを手札から選んでください。`
+        : `${getUnit(activeActorId).name}を選択中。この命令の直前に使う固有技またはALTを選んでください。`
+      : game.phase === "resolving"
       ? "命令と敵の行動を解決しています…"
       : game.queue.length
         ? (Number.isInteger(game.previewIndex)
@@ -3008,13 +3172,17 @@ function showHelp() {
 
 el.techniqueMode.addEventListener("click", () => setMode("technique"));
 el.moveMode.addEventListener("click", () => setMode("move"));
-el.cancel.addEventListener("click", () => { clearSelection(); render(); });
+el.cancel.addEventListener("click", () => {
+  clearSelection(); actorChoice = null; render();
+  if (activeActorId) el.actorStrip.querySelector(`[data-actor-id="${activeActorId}"]`)?.focus({ preventScroll: true });
+});
 el.undo.addEventListener("click", undoLast);
 el.execute.addEventListener("click", executeTurn);
 el.previewFinal.addEventListener("click", () => {
   if (game.phase !== "planning" || !game.queue.length) return;
   game.previewIndex = null;
   clearSelection();
+  actorChoice = null;
   render();
 });
 el.help.addEventListener("click", showHelp);
@@ -3069,6 +3237,14 @@ document.addEventListener("keydown", event => {
   }
   if (notesAreOpen()) return;
   if (event.key === "Escape" && pinnedStatusPopover) closeStatusPopover(true);
+  if (event.key === "Escape" && el.modal.hidden && game.phase === "planning" && activeActorId) {
+    event.preventDefault();
+    if (selectedCard() || actorChoice) { clearSelection(); actorChoice = null; }
+    else clearActorView();
+    render();
+    (activeActorId ? el.actorStrip.querySelector(`[data-actor-id="${activeActorId}"]`) : el.actorStrip.querySelector("button:not(:disabled)"))?.focus({ preventScroll: true });
+    return;
+  }
   if (el.modal.hidden || event.target?.closest?.("#notes-dialog")) return;
   if (event.key === "Escape" && el.modal.dataset.help === "true") {
     event.preventDefault();

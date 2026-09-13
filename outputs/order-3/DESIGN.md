@@ -240,6 +240,14 @@ The Google Forms response URL and its observed `entry.1309058111` field are fixe
 
 Before confirmation and again before opening, the editor checks current saved content. A changed note in another tab blocks the old confirmation from opening; a concurrent change during opening cannot replace the newer body through metadata recording. Saving failure leaves the draft, copy, export, and raw-data rescue paths available. Escape from confirmation returns to editing; a second Escape uses the existing close and save-failure flow. `work/act17-implementation/product-test.cjs` covers exact response text, URL branching, v1 history, native 320px confirmation, long text, retry identity, and a cross-tab update. Older ACT13 test descriptions above document the previous GitHub route as history.
 
+## Character-first command lookup (ACT 18)
+
+COMMAND HAND now has a permanent three-character strip showing each living ally's actual HP, role, and number of cards in hand with that owner's ID. A player cell on the displayed board also selects its unit ID when no card is selected. The strip remains the route for an ally absent from a forecast display; it does not present forecast HP as actual HP. The selected ally's panel lists only their owned, unused technique cards and one ALT action. A zero-card message is explicit. Card candidates are evaluated as a provisional next action through the same speed-ordered timeline and `validCells` rules as direct card selection. The panel says whether a target exists before the command and gives the existing range/defeat reason when none does. This is target availability at selection time, not a promise that resolution succeeds.
+
+Selecting a technique in the panel calls the existing card selection path and leaves target confirmation to the board. ALT takes actor, then any card in hand (including a dead owner's Legacy card), then a valid adjacent destination. It sets the same move-mode selection as the direct card path, and `handleCellClick` creates the unchanged FAST action. Character selection and panel stage are separate display-only variables; they are absent from `game`, queue, deck, hand, instance IDs, resolver and RNG. Direct hand selection clears the character filter, while cancelling a character-origin target returns to the selected ally. Queue registration keeps that ally selected so the remaining cards/slots can be recalculated. Resolving and restart clear this display state.
+
+The browser regression in `work/act18-implementation/behavior.cjs` uses two pages with the same seeded deck to compare the new and direct paths. It checks target sets, exact queue actions, forecast and post-resolution state including random-call counts; the record also measures repeated candidate evaluation. The ACT17 notes form remains a separate, unchanged flow apart from the current version label. Earlier sections document the historical ACT17 product.
+
 ## Prototype boundaries
 
 - One 6x6 battlefield.
