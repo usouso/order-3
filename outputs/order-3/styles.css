@@ -355,6 +355,24 @@ h2 { margin: 3px 0 0; font-size: 17px; letter-spacing: .04em; }
 .enemy-trace-heading button { flex: 0 0 auto; border: 1px solid currentColor; padding: 2px 5px; color: var(--ink); background: transparent; cursor: pointer; font: inherit; }
 .enemy-trace p { margin: 3px 0; overflow-wrap: anywhere; }
 .enemy-trace-path { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 5; color: var(--amber); pointer-events: none; opacity: .85; }
+.interpose-preview { margin-top: 10px; padding: 10px; border: 1px solid var(--cyan-dim); background: rgba(78,214,200,.045); }
+.interpose-preview[hidden] { display: none; }
+.interpose-preview h3 { margin: 0 0 5px; color: var(--cyan); font-size: 13px; }
+.interpose-preview > p { margin: 0 0 8px; color: var(--muted); font-size: 11px; line-height: 1.5; }
+.interpose-preview-list { display: grid; gap: 8px; }
+.interpose-candidate { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 7px; align-items: stretch; }
+.interpose-candidate button { min-height: 44px; max-width: 100%; padding: 7px 9px; border: 1px solid var(--cyan-dim); background: var(--panel-2); color: var(--ink); font: inherit; font-size: 11px; line-height: 1.5; white-space: normal; overflow-wrap: anywhere; cursor: pointer; }
+.interpose-candidate-preview { text-align: left; }
+.interpose-candidate-preview[aria-pressed="true"] { border-color: var(--amber); box-shadow: inset 0 0 0 1px var(--amber); }
+.interpose-candidate .interpose-candidate-register { max-width: 116px; border-color: var(--amber); color: var(--amber); font-weight: 800; }
+.interpose-candidate button:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
+.interpose-preview-status { margin: 5px 0 0; color: var(--amber); font-size: 11px; line-height: 1.5; }
+.interpose-preview-status:empty { display: none; }
+.interpose-preview-path { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 5; color: var(--cyan); pointer-events: none; }
+.cell.interpose-start { outline: 2px dashed var(--cyan); outline-offset: -5px; }
+.cell.interpose-stop { box-shadow: inset 0 0 0 3px var(--cyan); }
+.cell.interpose-entered { border-color: var(--cyan); }
+.interpose-ordinal { position: absolute; z-index: 6; left: 2px; bottom: 2px; min-width: 15px; padding: 0 2px; border: 1px solid currentColor; border-radius: 50%; background: var(--panel-2); color: var(--cyan); font-size: 10px; font-weight: 900; pointer-events: none; }
 .cell.trace-start { outline: 2px dashed var(--cyan); outline-offset: -4px; }
 .cell.trace-stop { border: 3px solid var(--amber); }
 .cell.trace-target { box-shadow: inset 0 0 0 3px var(--red); }
@@ -804,6 +822,8 @@ h2 { margin: 3px 0 0; font-size: 17px; letter-spacing: .04em; }
 }
 
 @media (max-width: 420px) {
+  .interpose-candidate { grid-template-columns: minmax(0, 1fr); }
+  .interpose-candidate .interpose-candidate-register { max-width: none; }
   body { min-width: 0; }
   .game-shell { width: calc(100% - 16px); max-width: 100%; }
   .topbar { grid-template-columns: minmax(0, 1fr) auto auto; gap: 8px; padding-inline: 0; }
@@ -832,6 +852,10 @@ h2 { margin: 3px 0 0; font-size: 17px; letter-spacing: .04em; }
 }
 
 @media (forced-colors: active) {
+  .interpose-preview, .interpose-candidate button { border-color: ButtonText; color: ButtonText; background: Canvas; }
+  .interpose-preview h3, .interpose-preview-status, .interpose-ordinal { color: CanvasText; }
+  .cell.interpose-start, .cell.interpose-stop, .cell.interpose-entered { outline-color: Highlight; border-color: Highlight; box-shadow: inset 0 0 0 3px Highlight; }
+  .interpose-preview-path { color: Highlight; }
   .queue-prediction, .queue-prediction.cancelled, .queue-return-status { color: CanvasText; }
   .queue-return-button { border-color: ButtonText; color: ButtonText; background: ButtonFace; }
   .turn-guide, .turn-guide button { border-color: CanvasText; background: Canvas; color: CanvasText; }

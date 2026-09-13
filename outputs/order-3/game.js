@@ -1,5 +1,5 @@
 const SIZE = 6;
-const GAME_VERSION = "ACT 21";
+const GAME_VERSION = "ACT 22";
 const SPEED_ORDER = { fast: 0, normal: 1, slow: 2 };
 const SPEED_LABEL = { fast: "FAST", normal: "NORMAL", slow: "SLOW" };
 const WALLS = [{ x: 2, y: 2 }, { x: 3, y: 3 }];
@@ -288,6 +288,8 @@ const game = {
 const movementUI = { battleGeneration: 0, queueGeneration: 0, open: new Set(), returnTo: null };
 let enemyTrace = null; // Display-only selection, bound to one event and one plan generation.
 let queueReturnMessage = "";
+let interposePreviewTargetId = null;
+let interposePreviewMessage = "";
 
 function movementPlanToken() {
   return `${movementUI.battleGeneration}:${game.turn}:${movementUI.queueGeneration}`;
@@ -300,6 +302,8 @@ function clearMovementReading(newPlan = false, newBattle = false) {
   movementUI.returnTo = null;
   enemyTrace = null;
   if (newPlan || newBattle) queueReturnMessage = "";
+  interposePreviewTargetId = null;
+  interposePreviewMessage = "";
 }
 
 const el = {
@@ -312,6 +316,9 @@ const el = {
   guideNext: document.querySelector("#turn-guide-next"),
   guideClose: document.querySelector("#turn-guide-close"),
   board: document.querySelector("#battlefield"),
+  interposePreview: document.querySelector("#interpose-preview"),
+  interposePreviewList: document.querySelector("#interpose-preview-list"),
+  interposePreviewStatus: document.querySelector("#interpose-preview-status"),
   enemyTrace: document.querySelector("#enemy-trace"),
   statusPopover: document.querySelector("#board-status-popover"),
   hand: document.querySelector("#hand"),
@@ -386,6 +393,7 @@ function renderTurnGuide() {
 
 function openTurnGuide() {
   if (game.phase !== "planning") return;
+  clearInterposePreviewDisplay();
   turnGuide.active = true;
   turnGuide.step = 0;
   turnGuide.announcedStep = null;
@@ -828,6 +836,103 @@ function targetsForState(state, owner, type, range, legacy) {
   return targetCandidatesForState(state, owner, type)
     .filter(candidate => legacy || type === "self" || !owner || distance(owner, candidate) <= range)
     .map(candidate => ({ x: candidate.x, y: candidate.y }));
+}
+
+function interposeCandidateContext() {
+  const card = selectedCard();
+  if (game.phase !== "planning" || game.queue.length >= 3 || game.mode !== "technique"
+    || card?.cardId !== "interpose" || getUnit("rook")?.hp <= 0) return null;
+  const selection = { card, mode: "technique", moveUnitId: null };
+  const context = selectionTimelineContext(selection);
+  return context ? { card, context, cells: validCells(context, selection) } : null;
+}
+
+function interposeCandidateForecasts() {
+  const selection = interposeCandidateContext();
+  if (!selection) return [];
+  return selection.cells.slice(0, 2).map(cell => {
+    const target = simUnitAt(selection.context.state, cell.x, cell.y);
+    if (!target || target.side !== "player" || target.id === "rook") return null;
+    const action = {
+      instance: selection.card, cardId: "interpose", mode: "technique", actorId: "rook",
+      targetId: target.id, target: { x: cell.x, y: cell.y }, speed: cardDefs.interpose.speed,
+      label: `${getUnit("rook").name}：${cardDefs.interpose.name}`
+    };
+    const forecast = predictTimeline(buildResolutionEvents([...game.queue, action]));
+    const index = forecast.events.findIndex(event => event.kind === "player" && event.payload === action);
+    if (index < 0) return null;
+    const before = index ? forecast.snapshots[index - 1].state : forecast.initial;
+    const after = forecast.snapshots[index].state;
+    const outcome = forecast.snapshots[index].outcome;
+    const actorBefore = simGetUnit(before, "rook");
+    const targetBefore = simGetUnit(before, target.id);
+    const actorAfter = simGetUnit(after, "rook");
+    const targetAfter = simGetUnit(after, target.id);
+    let entered = [];
+    let movementReason = "";
+    if (outcome.status === "cancelled") movementReason = `取消：${outcome.reason}`;
+    else if (!actorBefore || !targetBefore || !actorAfter || !targetAfter) movementReason = "現在計画では経路を表示できません";
+    else if (actorBefore.rooted) movementReason = "移動不能のため移動0";
+    else {
+      const evidence = { excluded: [], pathResult: null };
+      entered = simPathToAdjacent(before, actorBefore, targetBefore, evidence).slice(0, 2);
+      if (!entered.length) movementReason = evidence.pathResult === "already_adjacent"
+        ? "既に隣接しているため移動0" : "隣接経路なし・移動0";
+      else if (!isOrthogonallyAdjacent(entered[entered.length - 1], targetBefore)) movementReason = "2歩では隣接未達";
+      const stop = entered.at(-1) || actorBefore;
+      if (actorAfter.x !== stop.x || actorAfter.y !== stop.y) {
+        entered = [];
+        movementReason = "現在計画では経路を表示できません";
+      }
+    }
+    return {
+      targetId: target.id, targetName: target.name, cell: { x: cell.x, y: cell.y },
+      before: actorBefore && targetBefore ? { actor: { x: actorBefore.x, y: actorBefore.y }, target: { x: targetBefore.x, y: targetBefore.y } } : null,
+      after: actorAfter && targetAfter ? { actor: { x: actorAfter.x, y: actorAfter.y }, target: { x: targetAfter.x, y: targetAfter.y } } : null,
+      entered, movementReason, status: outcome.status, reason: outcome.reason,
+      actorGuardGain: actorAfter && actorBefore ? actorAfter.guard - actorBefore.guard : 0,
+      targetGuardGain: targetAfter && targetBefore ? targetAfter.guard - targetBefore.guard : 0
+    };
+  }).filter(Boolean);
+}
+
+function interposeCandidateText(candidate) {
+  const point = cell => `(${cell.x + 1},${cell.y + 1})`;
+  if (!candidate.before || !candidate.after) return `${candidate.targetName}：${candidate.movementReason}`;
+  const start = `この命令の直前：ルーク${point(candidate.before.actor)}、${candidate.targetName}${point(candidate.before.target)}`;
+  if (candidate.status === "cancelled") return `${start}。仮に登録した場合：${candidate.movementReason}。装甲なし。`;
+  const path = [candidate.before.actor, ...candidate.entered].map(point).join("→");
+  const guard = `ルーク装甲+${candidate.actorGuardGain}、${candidate.targetName}装甲+${candidate.targetGuardGain}`;
+  return `${start}。仮に登録した場合：ルーク${path}、停止${point(candidate.after.actor)}、${candidate.entered.length}歩${candidate.movementReason ? `（${candidate.movementReason}）` : ""}。${guard}。`;
+}
+
+function interposePlanIdentity() {
+  return `${movementPlanToken()}:${game.turn}:${game.queue.map(action => action.instance.instanceId).join("|")}`;
+}
+
+function clearInterposePreviewDisplay() {
+  if (interposePreviewTargetId === null && !interposePreviewMessage) return;
+  interposePreviewTargetId = null;
+  interposePreviewMessage = "";
+  renderBoard();
+  renderInterposeCandidates();
+}
+
+function registerInterposeCandidate(candidate, cardId, planIdentity, button) {
+  const current = interposeCandidateContext();
+  const target = current && simGetUnit(current.context.state, candidate.targetId);
+  const legal = current && current.card.instanceId === cardId && game.mode === "technique"
+    && interposePlanIdentity() === planIdentity && button.isConnected
+    && el.modal.hidden && !notesAreOpen() && target?.hp > 0
+    && target.x === candidate.cell.x && target.y === candidate.cell.y
+    && current.cells.some(cell => cell.x === target.x && cell.y === target.y);
+  if (!legal) {
+    interposePreviewMessage = "計画が変わりました。もう一度確認してください。";
+    render();
+    return false;
+  }
+  handleCellClick(target.x, target.y);
+  return true;
 }
 
 function unavailableTechniqueTargetReason(context, shown, owner, legacy) {
@@ -2353,7 +2458,9 @@ function pause(ms) {
 }
 
 function render() {
-  renderBoard();
+  const interposeCandidates = interposeCandidateForecasts();
+  renderBoard(interposeCandidates);
+  renderInterposeCandidates(interposeCandidates);
   renderHand();
   renderActorPanel();
   renderIntents();
@@ -2363,6 +2470,50 @@ function render() {
   renderLog();
   renderControls();
   renderTurnGuide();
+}
+
+function renderInterposeCandidates(candidates = interposeCandidateForecasts()) {
+  el.interposePreview.hidden = !candidates.length;
+  el.interposePreviewList.innerHTML = "";
+  if (el.interposePreviewStatus.textContent !== interposePreviewMessage) {
+    el.interposePreviewStatus.textContent = interposePreviewMessage;
+  }
+  if (!candidates.some(candidate => candidate.targetId === interposePreviewTargetId)) interposePreviewTargetId = null;
+  if (!candidates.length) return;
+  const planIdentity = interposePlanIdentity();
+  const cardId = selectedCard().instanceId;
+  for (const candidate of candidates) {
+    const row = document.createElement("div");
+    row.className = "interpose-candidate";
+    row.dataset.targetId = candidate.targetId;
+    const preview = document.createElement("button");
+    preview.type = "button";
+    preview.className = "interpose-candidate-preview";
+    preview.setAttribute("aria-pressed", String(interposePreviewTargetId === candidate.targetId));
+    preview.textContent = `対象：${candidate.targetName}｜${interposeCandidateText(candidate)}`;
+    preview.setAttribute("aria-label", `仮予測を盤面で見る。${interposeCandidateText(candidate)}`);
+    const showCandidate = () => {
+      if (!preview.isConnected || interposePlanIdentity() !== planIdentity || selectedCard()?.instanceId !== cardId) return;
+      interposePreviewTargetId = candidate.targetId;
+      interposePreviewMessage = `${candidate.targetName}の仮予測。${candidate.movementReason || `${candidate.entered.length}歩、停止(${candidate.after.actor.x + 1},${candidate.after.actor.y + 1})`}`;
+      renderBoard(candidates);
+      for (const button of el.interposePreviewList.querySelectorAll(".interpose-candidate-preview")) {
+        button.setAttribute("aria-pressed", String(button.closest("[data-target-id]")?.dataset.targetId === candidate.targetId));
+      }
+      if (el.interposePreviewStatus.textContent !== interposePreviewMessage) el.interposePreviewStatus.textContent = interposePreviewMessage;
+    };
+    preview.addEventListener("focus", showCandidate);
+    preview.addEventListener("click", showCandidate);
+    const register = document.createElement("button");
+    register.type = "button";
+    register.className = "interpose-candidate-register";
+    register.textContent = `${candidate.targetName}を対象に登録`;
+    register.setAttribute("aria-label", `割って入るを${candidate.targetName}へ登録`);
+    register.addEventListener("click", () => registerInterposeCandidate(candidate, cardId, planIdentity, register));
+    row.appendChild(preview);
+    row.appendChild(register);
+    el.interposePreviewList.appendChild(row);
+  }
 }
 
 function activeStatusEntries(unit) {
@@ -2513,25 +2664,26 @@ function renderEnemyTrace(trace) {
   });
 }
 
-function drawEnemyTracePath(path) {
+function drawEnemyTracePath(path, className = "enemy-trace-path", markerId = "trace-arrow") {
   if (!path.length) return;
   const cells = el.board.querySelectorAll(".cell");
   const center = cell => { const node = cells[cell.y * SIZE + cell.x]; return [node.offsetLeft + node.offsetWidth / 2, node.offsetTop + node.offsetHeight / 2]; };
   const points = path.map(center).map(([x, y]) => `${x},${y}`).join(" ");
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-  svg.setAttribute("class", "enemy-trace-path");
+  svg.setAttribute("class", className);
   svg.setAttribute("viewBox", `0 0 ${el.board.clientWidth} ${el.board.clientHeight}`);
   svg.setAttribute("aria-hidden", "true");
-  svg.innerHTML = `<defs><marker id="trace-arrow" markerWidth="7" markerHeight="7" refX="5" refY="3.5" orient="auto"><path d="M0 0 L7 3.5 L0 7 Z" fill="currentColor"/></marker></defs><polyline points="${points}" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#trace-arrow)"/>`;
+  svg.innerHTML = `<defs><marker id="${markerId}" markerWidth="7" markerHeight="7" refX="5" refY="3.5" orient="auto"><path d="M0 0 L7 3.5 L0 7 Z" fill="currentColor"/></marker></defs><polyline points="${points}" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#${markerId})"/>`;
   el.board.appendChild(svg);
 }
 
-function renderBoard() {
+function renderBoard(interposeCandidates = []) {
   closeStatusPopover(true);
   const valid = new Set(validCells().map(keyOf));
   const context = timelineDisplayContext();
   const trace = activeEnemyTrace();
   const marks = trace ? traceCellKeys(trace) : null;
+  const candidate = interposeCandidates.find(item => item.targetId === interposePreviewTargetId);
   const previewState = context.state;
   const isPreview = Boolean(selectedCard() || currentForecast() || trace);
   const displayedHostileRunes = previewState.hostileRunes;
@@ -2564,6 +2716,20 @@ function renderBoard() {
         if (ordinal >= 0) {
           const badge = document.createElement("span"); badge.className = "trace-ordinal";
           badge.setAttribute("aria-hidden", "true"); badge.textContent = String(ordinal + 1); cell.appendChild(badge);
+        }
+      }
+      if (candidate?.status === "resolved" && candidate.before && candidate.after) {
+        const here = item => item && item.x === x && item.y === y;
+        if (here(candidate.before.actor)) cell.classList.add("interpose-start");
+        if (here(candidate.after.actor)) cell.classList.add("interpose-stop");
+        const ordinal = candidate.entered.findIndex(here);
+        if (ordinal >= 0) {
+          cell.classList.add("interpose-entered");
+          const badge = document.createElement("span");
+          badge.className = "interpose-ordinal";
+          badge.setAttribute("aria-hidden", "true");
+          badge.textContent = String(ordinal + 1);
+          cell.appendChild(badge);
         }
       }
       const unit = previewDisplayUnitAt(previewState, x, y);
@@ -2608,6 +2774,9 @@ function renderBoard() {
     }
   }
   if (marks?.actor && marks.path.length) drawEnemyTracePath([marks.actor, ...marks.path]);
+  if (candidate?.status === "resolved" && candidate.before && candidate.entered.length) {
+    drawEnemyTracePath([candidate.before.actor, ...candidate.entered], "interpose-preview-path", "interpose-preview-arrow");
+  }
   renderEnemyTrace(trace);
 }
 
@@ -3375,6 +3544,7 @@ function showModal(title, body, buttonText, action = "close", screen = "message"
 
 function showHelp() {
   if (!el.modal.hidden && el.modal.dataset.help === "true") return;
+  clearInterposePreviewDisplay();
   const previous = el.modal.hidden ? null : {
     title: el.modalTitle.textContent,
     body: el.modalBody.innerHTML,
@@ -3452,6 +3622,7 @@ el.previewFinal.addEventListener("click", () => {
   render();
 });
 el.help.addEventListener("click", showHelp);
+el.notesButton.addEventListener("click", clearInterposePreviewDisplay);
 el.modalHelp.addEventListener("click", event => {
   if (modalActivationAllowed(event)) showHelp();
 });

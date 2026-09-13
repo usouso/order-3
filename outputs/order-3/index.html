@@ -51,6 +51,12 @@
           <p id="instruction" tabindex="-1">味方か手札を選び、対象を指定してください。</p>
           <button id="cancel-selection" class="text-button" hidden>選択解除</button>
         </div>
+        <section id="interpose-preview" class="interpose-preview" aria-labelledby="interpose-preview-title" hidden>
+          <h3 id="interpose-preview-title">割って入る｜対象別の仮予測</h3>
+          <p>候補を見るだけでは登録しません。後続の結果も変わり得ます。</p>
+          <div id="interpose-preview-list" class="interpose-preview-list"></div>
+        </section>
+        <p id="interpose-preview-status" class="interpose-preview-status" role="status" aria-live="polite" aria-atomic="true"></p>
         <div id="enemy-trace" class="enemy-trace" aria-live="polite" hidden></div>
       </div>
 
