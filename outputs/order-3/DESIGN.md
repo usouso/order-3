@@ -248,6 +248,10 @@ Selecting a technique in the panel calls the existing card selection path and le
 
 The browser regression in `work/act18-implementation/behavior.cjs` uses two pages with the same seeded deck to compare the new and direct paths. It checks target sets, exact queue actions, forecast and post-resolution state including random-call counts; the record also measures repeated candidate evaluation. The ACT17 notes form remains a separate, unchanged flow apart from the current version label. Earlier sections document the historical ACT17 product.
 
+## Enemy intent trace (ACT 19)
+
+ACT 19 adds an event-key-bound enemy trace to ACTION ORDER. Selecting an enemy event uses its existing forecast snapshot and `movementEvidence`: the preceding snapshot supplies the actor and fixed target positions; `entered` supplies the actual route; the selected snapshot supplies the stop and structured outcome. The trace is display-only and tied to the current plan generation. Queue 0 obtains the same pure forecast on demand. Start, entry order, stop, announced target, and effect cells have separate board marks and a short text account. A pointer-free SVG line connects only actual entered cells. Actor or card selection and plan changes clear the trace; the close control returns to final forecast. The board's native target buttons remain operable. The combat resolver and random sequence are unchanged.
+
 ## Prototype boundaries
 
 - One 6x6 battlefield.

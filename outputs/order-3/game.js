@@ -1,5 +1,5 @@
 const SIZE = 6;
-const GAME_VERSION = "ACT 18";
+const GAME_VERSION = "ACT 19";
 const SPEED_ORDER = { fast: 0, normal: 1, slow: 2 };
 const SPEED_LABEL = { fast: "FAST", normal: "NORMAL", slow: "SLOW" };
 const WALLS = [{ x: 2, y: 2 }, { x: 3, y: 3 }];
@@ -286,6 +286,7 @@ const game = {
 
 // Short-lived reading state, outside combat and opt-in note scenes.
 const movementUI = { battleGeneration: 0, queueGeneration: 0, open: new Set(), returnTo: null };
+let enemyTrace = null; // Display-only selection, bound to one event and one plan generation.
 
 function movementPlanToken() {
   return `${movementUI.battleGeneration}:${game.turn}:${movementUI.queueGeneration}`;
@@ -296,10 +297,12 @@ function clearMovementReading(newPlan = false, newBattle = false) {
   if (newPlan) movementUI.queueGeneration += 1;
   movementUI.open.clear();
   movementUI.returnTo = null;
+  enemyTrace = null;
 }
 
 const el = {
   board: document.querySelector("#battlefield"),
+  enemyTrace: document.querySelector("#enemy-trace"),
   statusPopover: document.querySelector("#board-status-popover"),
   hand: document.querySelector("#hand"),
   actorStrip: document.querySelector("#actor-strip"),
@@ -804,6 +807,7 @@ function firstPriorDefeatEvent(context, unitId, startingHp) {
 function chooseActor(unitId) {
   const unit = getUnit(unitId);
   if (game.phase !== "planning" || !unit || unit.side !== "player" || unit.hp <= 0) return;
+  if (enemyTrace) { enemyTrace = null; game.previewIndex = null; }
   if (selectedCard()) clearSelection();
   activeActorId = unitId;
   actorChoice = null;
@@ -1690,6 +1694,15 @@ function selectedForecastState(forecast = currentForecast()) {
   return forecast.final;
 }
 
+function activeEnemyTrace() {
+  if (!enemyTrace || enemyTrace.token !== movementPlanToken() || game.phase !== "planning" || selectedCard() || actorChoice) return null;
+  const forecast = currentForecast() || predictTimeline(buildResolutionEvents());
+  const index = forecast.events.findIndex(event => event.key === enemyTrace.key && event.kind === "enemy");
+  if (index < 0 || game.previewIndex !== index || forecast.snapshots[index]?.eventKey !== enemyTrace.key) return null;
+  return { forecast, index, event: forecast.events[index], before: index ? forecast.snapshots[index - 1].state : forecast.initial,
+    after: forecast.snapshots[index].state, outcome: forecast.snapshots[index].outcome };
+}
+
 function timelineDisplayContext() {
   const selection = selectionTimelineContext();
   if (selection) {
@@ -1701,7 +1714,8 @@ function timelineDisplayContext() {
       selection
     };
   }
-  const forecast = currentForecast();
+  const trace = activeEnemyTrace();
+  const forecast = trace?.forecast || currentForecast();
   if (forecast) {
     const afterIndex = Number.isInteger(game.previewIndex) && forecast.snapshots[game.previewIndex]
       ? game.previewIndex
@@ -2334,12 +2348,79 @@ function restorePinnedStatusPopover() {
   closeStatusPopover(false);
 }
 
+function enemyTraceFlow(id) {
+  return ({ stalk: "接近 → 攻撃", pounce: "接近 → 飛びかかり", recover: "開始時に隣接なら攻撃／離れていれば接近のみ",
+    cover: "庇護", shield_drive: "接近 → 盾撃", brace: "防御 → 反撃準備", inscribe: "災印設置",
+    detonate: "災印起爆", drain: "攻撃 → 回復" })[id] || "行動";
+}
+
+function traceCellKeys(trace) {
+  const evidence = trace.outcome.movementEvidence;
+  const actor = simGetUnit(trace.before, trace.event.payload.actorId);
+  const stop = simGetUnit(trace.after, trace.event.payload.actorId);
+  const target = trace.event.payload.targetId && simGetUnit(trace.before, trace.event.payload.targetId);
+  const announced = trace.event.payload.targetKind === "cells" ? trace.event.payload.cells || [] : [];
+  const effect = trace.outcome.status === "cancelled" ? []
+    : trace.event.payload.id === "inscribe" ? trace.event.payload.cells || []
+    : trace.event.payload.id === "detonate" ? trace.before.hostileRunes : [];
+  return { evidence, actor, stop, target, announced, effect,
+    path: evidence?.eventKey === trace.event.key ? evidence.entered : [] };
+}
+
+function renderEnemyTrace(trace) {
+  if (!trace) { el.enemyTrace.hidden = true; el.enemyTrace.innerHTML = ""; return; }
+  const { actor, stop, target, announced, evidence, path } = traceCellKeys(trace);
+  const event = trace.event, view = timelineEventView(event), outcome = trace.outcome;
+  const point = cell => cell ? `(${cell.x + 1},${cell.y + 1})` : "なし";
+  const targetText = event.payload.targetKind === "cells" ? `マス ${announced.map(point).join(" / ") || "なし"}`
+    : target ? `${target.name}${point(target)}` : timelineTargetLabel(event);
+  const stopReason = evidence?.trap ? `火種の罠で停止 ${point(evidence.trap)}`
+    : evidence?.movementEnd === "rooted" ? "移動不能で停止"
+    : evidence?.pathResult === "no_path" ? "経路なしで移動なし"
+    : evidence?.pathResult === "already_adjacent" ? "開始時から隣接、移動なし"
+    : "";
+  const actionResult = outcome.status === "cancelled" ? `取消：${outcome.reason}` : outcome.summary;
+  const attackText = evidence ? (evidence.attack.performed ? "攻撃あり" : "攻撃なし") : "";
+  const drainText = event.payload.id === "drain" ? "回復先は実行時の負傷状況で決定。" : "";
+  el.enemyTrace.hidden = false;
+  el.enemyTrace.innerHTML = `<div class="enemy-trace-heading"><strong>予告トレース｜${String(trace.index + 1).padStart(2, "0")} ${escapeEffectText(view.name)}「${escapeEffectText(view.action)}」</strong><button type="button" id="enemy-trace-close" aria-label="敵の予告トレースを閉じる">閉じる ×</button></div>
+    <p>${escapeEffectText(SPEED_LABEL[event.speed])} · ${escapeEffectText(enemyTraceFlow(event.payload.id))}</p>
+    <p>開始 ${point(actor)} → 停止 ${point(stop)}${path.length ? `（進入 ${path.map(point).join(" → ")}）` : "（進入なし）"}。対象予告：${escapeEffectText(targetText)}。</p>
+    <p>この計画の予測：${escapeEffectText(actionResult)}${stopReason ? `。${stopReason}` : ""}${attackText ? `。${attackText}` : ""}。${drainText}</p>
+    <p class="enemy-trace-legend">破線＝開始、番号と線＝実際の進入、太枠＝停止、赤枠＝予告対象、赤地＝設置・起爆マス。予告対象と予測結果は別です。</p>`;
+  el.enemyTrace.querySelector("#enemy-trace-close").addEventListener("click", () => {
+    const returnKey = enemyTrace?.key;
+    enemyTrace = null;
+    game.previewIndex = null;
+    render();
+    const returnControl = !el.previewFinal.disabled ? el.previewFinal
+      : [...el.timeline.querySelectorAll("[data-event-key]")].find(step => step.dataset.eventKey === returnKey && !step.disabled)
+        || el.timeline.querySelector("button:not(:disabled)");
+    (returnControl || el.help).focus({ preventScroll: true });
+  });
+}
+
+function drawEnemyTracePath(path) {
+  if (!path.length) return;
+  const cells = el.board.querySelectorAll(".cell");
+  const center = cell => { const node = cells[cell.y * SIZE + cell.x]; return [node.offsetLeft + node.offsetWidth / 2, node.offsetTop + node.offsetHeight / 2]; };
+  const points = path.map(center).map(([x, y]) => `${x},${y}`).join(" ");
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("class", "enemy-trace-path");
+  svg.setAttribute("viewBox", `0 0 ${el.board.clientWidth} ${el.board.clientHeight}`);
+  svg.setAttribute("aria-hidden", "true");
+  svg.innerHTML = `<defs><marker id="trace-arrow" markerWidth="7" markerHeight="7" refX="5" refY="3.5" orient="auto"><path d="M0 0 L7 3.5 L0 7 Z" fill="currentColor"/></marker></defs><polyline points="${points}" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#trace-arrow)"/>`;
+  el.board.appendChild(svg);
+}
+
 function renderBoard() {
   closeStatusPopover(true);
   const valid = new Set(validCells().map(keyOf));
   const context = timelineDisplayContext();
+  const trace = activeEnemyTrace();
+  const marks = trace ? traceCellKeys(trace) : null;
   const previewState = context.state;
-  const isPreview = Boolean(selectedCard() || currentForecast());
+  const isPreview = Boolean(selectedCard() || currentForecast() || trace);
   const displayedHostileRunes = previewState.hostileRunes;
   const displayedEmberRunes = previewState.emberRunes;
   const intentCells = new Set(unresolvedIntentCells(context).map(keyOf));
@@ -2358,6 +2439,20 @@ function renderBoard() {
       if (intentCells.has(`${x},${y}`)) cell.classList.add("intent");
       if (displayedHostileRunes.some(rune => rune.x === x && rune.y === y)) cell.classList.add("rune");
       if (displayedEmberRunes.some(rune => rune.x === x && rune.y === y)) cell.classList.add("ember");
+      if (marks) {
+        const here = item => item && item.x === x && item.y === y;
+        if (here(marks.actor)) cell.classList.add("trace-start");
+        if (here(marks.stop)) cell.classList.add("trace-stop");
+        if (here(marks.target)) cell.classList.add("trace-target");
+        if (marks.announced.some(here)) cell.classList.add("trace-target");
+        if (marks.effect.some(here)) cell.classList.add("trace-effect");
+        if (marks.evidence?.trap && here(marks.evidence.trap)) cell.classList.add("trace-trap");
+        const ordinal = marks.path.findIndex(here);
+        if (ordinal >= 0) {
+          const badge = document.createElement("span"); badge.className = "trace-ordinal";
+          badge.setAttribute("aria-hidden", "true"); badge.textContent = String(ordinal + 1); cell.appendChild(badge);
+        }
+      }
       const unit = previewDisplayUnitAt(previewState, x, y);
       if (isPreview) {
         const movedFromHere = game.units.some(item => {
@@ -2399,6 +2494,8 @@ function renderBoard() {
       el.board.appendChild(cell);
     }
   }
+  if (marks?.actor && marks.path.length) drawEnemyTracePath([marks.actor, ...marks.path]);
+  renderEnemyTrace(trace);
 }
 
 function previewDisplayUnitAt(state, x, y) {
@@ -2685,7 +2782,8 @@ function timelineResultLabel(provisional, outcome, selection, index) {
 
 function renderTimeline() {
   const selection = selectionTimelineContext();
-  const forecast = selection ? null : currentForecast();
+  const trace = activeEnemyTrace();
+  const forecast = selection ? null : trace?.forecast || currentForecast();
   const events = selection?.events || forecast?.events || buildResolutionEvents();
   el.timeline.innerHTML = "";
 
@@ -2703,7 +2801,7 @@ function renderTimeline() {
     step.type = "button";
     const isDone = game.timelineCursor >= 0 && index < game.timelineCursor;
     const isCurrent = game.phase === "resolving" && index === game.timelineCursor;
-    const isSelected = provisional || (game.phase === "planning" && !selection && game.previewIndex === index);
+    const isSelected = provisional || (game.phase === "planning" && !selection && (trace?.event.key === event.key || game.previewIndex === index));
     const cancelled = outcome ? outcome.status === "cancelled" : !view.canAct;
     const sideLabel = event.kind === "enemy" ? "ENEMY" : "ALLY";
     const spokenSide = event.kind === "enemy" ? "敵" : "味方";
@@ -2721,7 +2819,7 @@ function renderTimeline() {
       SPEED_LABEL[event.speed],
       `対象${targetLabel}`,
       effectText,
-      "効果詳細を開く",
+      event.kind === "enemy" ? "予告トレースと効果詳細を開く" : "効果詳細を開く",
       resultLabel
     ].join("、"));
     step.setAttribute("aria-controls", "timeline-detail-panel");
@@ -2735,10 +2833,11 @@ function renderTimeline() {
       <span class="timeline-side">${sideLabel}</span>
       <span class="timeline-name">${view.name}</span>
       <span class="timeline-action">${cancelled ? "取消：" : ""}${view.action}</span>
+      ${event.kind === "enemy" ? `<span class="timeline-flow">予告：${enemyTraceFlow(event.payload.id)}</span>` : ""}
       <span class="speed ${event.speed}">${SPEED_LABEL[event.speed]}</span>
       <span class="timeline-target">対象：${targetLabel}</span>
       ${effectText ? `<span class="timeline-effects"><span>${highlightIntentClause(escapeEffectText(effectText))}</span></span>` : ""}
-      <span class="timeline-detail-hint">効果詳細 ▾</span>
+      <span class="timeline-detail-hint">${event.kind === "enemy" ? "盤面で追う・効果詳細 ▾" : "効果詳細 ▾"}</span>
       <span class="timeline-result${outcome ? " predicted" : ""}">${resultLabel}</span>
     `;
     step.disabled = game.phase !== "planning" || provisional;
@@ -2750,6 +2849,7 @@ function renderTimeline() {
       const baseIndex = baseForecast.events.findIndex(item => item.key === event.key);
       clearSelection();
       actorChoice = null;
+      enemyTrace = event.kind === "enemy" ? { key: event.key, token: movementPlanToken() } : null;
       game.previewIndex = baseIndex >= 0 ? baseIndex : null;
       render();
       el.timeline.querySelector?.(`[data-event-key="${event.key}"]`)?.focus({ preventScroll: true });
@@ -2758,8 +2858,8 @@ function renderTimeline() {
   });
 
   renderTimelineDetail(selection, forecast, events);
-  el.previewFinal.disabled = game.phase !== "planning" || !forecast || Boolean(selection);
-  el.previewFinal.classList.toggle("active", Boolean(forecast && !selection && game.previewIndex === null));
+  el.previewFinal.disabled = game.phase !== "planning" || !game.queue.length || Boolean(selection);
+  el.previewFinal.classList.toggle("active", Boolean(forecast && !selection && game.previewIndex === null && !trace));
 
   const actorsWithOrders = new Set(
     game.queue
@@ -2794,7 +2894,7 @@ function movementEventLabel(forecast, index) {
 }
 
 function renderMovementEvidence(forecast, index) {
-  if (game.phase !== "planning" || game.selectedInstanceId || !game.queue.length) return "";
+  if (game.phase !== "planning" || game.selectedInstanceId || (!game.queue.length && !activeEnemyTrace())) return "";
   const evidence = forecast?.snapshots[index]?.outcome?.movementEvidence;
   if (!evidence || evidence.eventKey !== forecast.events[index]?.key) return "";
   const token = movementPlanToken();
@@ -2863,7 +2963,9 @@ function bindMovementNavigation(forecast, index) {
       const origin = occupied && movementPositionOrigin(current, fromIndex, occupied);
       if (origin?.kind !== "event" || origin.eventKey !== button.dataset.relatedKey) return;
       movementUI.open.add(`${token}:${fromKey}`);
-      movementUI.returnTo = { token, fromKey, toKey: origin.eventKey, ordinal: Number(button.dataset.movementOrigin) };
+      movementUI.returnTo = { token, fromKey, toKey: origin.eventKey, ordinal: Number(button.dataset.movementOrigin),
+        traceKey: enemyTrace?.key === fromKey ? fromKey : null };
+      enemyTrace = null;
       game.previewIndex = origin.index;
       render();
       const heading = el.timelineDetail.querySelector?.("#timeline-detail-heading");
@@ -2882,6 +2984,8 @@ function bindMovementNavigation(forecast, index) {
       return;
     }
     game.previewIndex = destination;
+    enemyTrace = saved.traceKey === saved.fromKey && current.events[destination]?.kind === "enemy"
+      ? { key: saved.fromKey, token } : null;
     movementUI.returnTo = null;
     movementUI.open.add(`${token}:${saved.fromKey}`);
     render();
