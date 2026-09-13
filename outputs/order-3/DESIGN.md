@@ -256,6 +256,10 @@ ACT 19 adds an event-key-bound enemy trace to ACTION ORDER. Selecting an enemy e
 
 The initial modal states the actual victory and defeat conditions and offers two explicit starts. The guided choice opens a five-step panel in normal document flow over the existing three-ally battle; the other choice opens the same battle without the panel. The panel covers objective, ACTION ORDER, actor and hand, queue and forecast, and explicit execution. Its location control focuses existing non-action headings or the execution-control group and scrolls them into view. Back, next, close, Help reopening and result-screen guided restart change only short-lived guide presentation state. The guide closes on turn execution. It does not select an event/card/target, register a command, spend randomness, alter combat state, or make execution automatic. The existing modal input generation and held-key protection also apply to the new start/restart button.
 
+## Selective return of cancelled queue commands (ACT 21)
+
+ORDER QUEUE renders each registered action's outcome from the existing full `predictTimeline()` forecast. Only a non-last action whose outcome is `cancelled` receives a return button, with the reason visible and in its accessible name. The button is absent for queue lengths zero or one, valid actions, target selection, resolution and results. On activation the current plan generation, phase, selected state, unique card instance and full forecast are checked again. A stale activation changes no combat state and asks the player to confirm the updated plan. A valid activation removes exactly that queue action, appends its same card instance to hand once, clears ACT15 origin/ACT19 trace selection, resets preview and recomputes the full forecast. Remaining actions keep their instance, mode, actor, target and relative registration order. The existing LIFO undo continues to govern the newest command. No resolver, enemy AI, card value, draw or randomness rule changes.
+
 ## Prototype boundaries
 
 - One 6x6 battlefield.

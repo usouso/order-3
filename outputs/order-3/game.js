@@ -1,5 +1,5 @@
 const SIZE = 6;
-const GAME_VERSION = "ACT 20";
+const GAME_VERSION = "ACT 21";
 const SPEED_ORDER = { fast: 0, normal: 1, slow: 2 };
 const SPEED_LABEL = { fast: "FAST", normal: "NORMAL", slow: "SLOW" };
 const WALLS = [{ x: 2, y: 2 }, { x: 3, y: 3 }];
@@ -287,6 +287,7 @@ const game = {
 // Short-lived reading state, outside combat and opt-in note scenes.
 const movementUI = { battleGeneration: 0, queueGeneration: 0, open: new Set(), returnTo: null };
 let enemyTrace = null; // Display-only selection, bound to one event and one plan generation.
+let queueReturnMessage = "";
 
 function movementPlanToken() {
   return `${movementUI.battleGeneration}:${game.turn}:${movementUI.queueGeneration}`;
@@ -298,6 +299,7 @@ function clearMovementReading(newPlan = false, newBattle = false) {
   movementUI.open.clear();
   movementUI.returnTo = null;
   enemyTrace = null;
+  if (newPlan || newBattle) queueReturnMessage = "";
 }
 
 const el = {
@@ -328,6 +330,8 @@ const el = {
   modeHelp: document.querySelector("#mode-help"),
   pips: document.querySelector("#command-pips"),
   queue: document.querySelector("#order-queue"),
+  queueTitle: document.querySelector("#order-queue-title"),
+  queueReturnStatus: document.querySelector("#queue-return-status"),
   timeline: document.querySelector("#action-timeline"),
   timelineDetail: document.querySelector("#timeline-detail-panel"),
   idleUnits: document.querySelector("#idle-units"),
@@ -1066,6 +1070,57 @@ function undoLast() {
   clearSelection();
   actorChoice = null;
   render();
+}
+
+function queueReturnEligible() {
+  return game.phase === "planning" && game.queue.length > 1
+    && game.selectedInstanceId === null && !actorChoice;
+}
+
+function cancelledQueueOutcome(forecast, action) {
+  const key = `player-${action.instance.instanceId}`;
+  const eventIndex = forecast.events.findIndex(event => event.key === key && event.kind === "player" && event.payload === action);
+  return eventIndex < 0 ? null : forecast.snapshots[eventIndex]?.outcome || null;
+}
+
+function returnCancelledQueueAction(instanceId, planToken, sourceButton = null) {
+  const matches = game.queue.map((action, index) => ({ action, index }))
+    .filter(item => item.action.instance?.instanceId === instanceId);
+  const item = matches.length === 1 ? matches[0] : null;
+  const validContext = queueReturnEligible() && el.modal.hidden && !notesAreOpen()
+    && planToken === movementPlanToken() && (!sourceButton || sourceButton.isConnected)
+    && item && item.index < game.queue.length - 1
+    && !game.hand.some(card => card.instanceId === instanceId);
+  const before = validContext ? predictTimeline() : null;
+  const outcome = before && cancelledQueueOutcome(before, item.action);
+  if (!outcome || outcome.status !== "cancelled") {
+    queueReturnMessage = "計画が変わりました。もう一度確認してください。";
+    render();
+    if (el.modal.hidden && !notesAreOpen()) el.queueTitle.focus({ preventScroll: true });
+    return false;
+  }
+
+  const later = game.queue.slice(item.index + 1).map(action => ({
+    key: `player-${action.instance.instanceId}`,
+    outcome: cancelledQueueOutcome(before, action)
+  }));
+  game.queue.splice(item.index, 1);
+  game.hand.push(item.action.instance);
+  clearMovementReading(true);
+  game.previewIndex = null;
+  const after = predictTimeline();
+  const changed = later.some(entry => {
+    const nextIndex = after.events.findIndex(event => event.key === entry.key && event.kind === "player");
+    const next = nextIndex < 0 ? null : after.snapshots[nextIndex]?.outcome;
+    return entry.outcome?.status !== next?.status || entry.outcome?.reason !== next?.reason
+      || entry.outcome?.summary !== next?.summary;
+  });
+  const label = item.action.mode === "move" ? item.action.label : cardDefs[item.action.cardId]?.name || item.action.label;
+  queueReturnMessage = `${String(item.index + 1).padStart(2, "0")} ${label}を手札へ戻しました。残り${game.queue.length}件を再予測しました。${changed ? "後続命令の予測が変わりました。" : "後続命令の結果を確認してください。"}`;
+  render();
+  el.queueTitle.focus({ preventScroll: true });
+  el.queueTitle.scrollIntoView({ block: "nearest" });
+  return true;
 }
 
 function buildResolutionEvents(queue = game.queue, intents = game.intents) {
@@ -2741,15 +2796,32 @@ function renderSquad() {
 
 function renderQueue() {
   el.queue.innerHTML = "";
+  const forecast = game.phase === "planning" && game.queue.length ? predictTimeline() : null;
+  const canReturn = queueReturnEligible();
+  const planToken = movementPlanToken();
   for (let i = 0; i < 3; i += 1) {
     const action = game.queue[i];
     const slot = document.createElement("div");
     slot.className = `queue-slot${action ? " filled" : ""}`;
+    const outcome = action && forecast ? cancelledQueueOutcome(forecast, action) : null;
     slot.innerHTML = action
-      ? `<span class="queue-number">0${i + 1}</span>${action.label} <span class="speed ${action.speed}">${SPEED_LABEL[action.speed]}</span>`
+      ? `<span class="queue-number">0${i + 1}</span>${action.label} <span class="speed ${action.speed}">${SPEED_LABEL[action.speed]}</span>
+        ${outcome ? `<span class="queue-prediction${outcome.status === "cancelled" ? " cancelled" : ""}">予測：${outcome.status === "cancelled" ? `取消・${escapeEffectText(outcome.reason)}` : escapeEffectText(outcome.summary)}</span>` : ""}`
       : `<span class="queue-number">0${i + 1}</span>命令待機`;
+    if (action && canReturn && i < game.queue.length - 1 && outcome?.status === "cancelled") {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "queue-return-button";
+      button.dataset.returnInstanceId = action.instance.instanceId;
+      button.textContent = "取消命令を外して手札へ戻す";
+      button.setAttribute("aria-label", `登録順${String(i + 1).padStart(2, "0")} ${action.label}、予測で取消、理由：${outcome.reason}。手札へ戻す`);
+      button.addEventListener("click", () => returnCancelledQueueAction(action.instance.instanceId, planToken, button));
+      slot.appendChild(button);
+    }
     el.queue.appendChild(slot);
   }
+
+  if (el.queueReturnStatus.textContent !== queueReturnMessage) el.queueReturnStatus.textContent = queueReturnMessage;
 
   el.pips.innerHTML = "";
   for (let i = 0; i < 3; i += 1) {
