@@ -48,7 +48,7 @@
         <div id="board-status-popover" class="board-status-popover"
              aria-hidden="true" hidden></div>
         <div class="board-footer">
-          <p id="instruction" tabindex="-1">味方か手札を選び、対象を指定してください。</p>
+          <p id="instruction" tabindex="-1">フィールドの味方を選んでください。</p>
           <button id="cancel-selection" class="text-button" hidden>選択解除</button>
         </div>
         <section id="interpose-preview" class="interpose-preview" aria-labelledby="interpose-preview-title" hidden>
@@ -90,13 +90,17 @@
 
       <aside class="side-panel">
         <section class="squad-panel">
-          <p class="kicker">SQUAD STATUS</p>
-          <div id="squad-list" class="squad-list"></div>
+          <details>
+            <summary>味方の状態</summary>
+            <div id="squad-list" class="squad-list"></div>
+          </details>
         </section>
 
         <section class="log-panel">
-          <p class="kicker">COMBAT LOG</p>
-          <div id="combat-log" class="combat-log" aria-live="polite"></div>
+          <details>
+            <summary>戦闘ログ</summary>
+            <div id="combat-log" class="combat-log" aria-live="polite"></div>
+          </details>
         </section>
       </aside>
     </section>
@@ -105,7 +109,7 @@
       <div class="command-topline">
         <div>
           <p class="kicker">COMMAND HAND</p>
-          <p class="command-copy">上の実行順を読み、最大3枚を並べる</p>
+          <p class="command-copy">味方 → カード → 対象</p>
         </div>
         <div class="command-points" aria-label="残り命令数">
           <span>COMMAND</span>
@@ -114,10 +118,13 @@
       </div>
 
       <div class="actor-picker" aria-labelledby="actor-picker-title">
-        <p id="actor-picker-title" class="kicker" tabindex="-1">味方を選ぶ · このキャラの命令</p>
-        <div id="actor-strip" class="actor-strip" role="group" aria-label="命令する味方"></div>
+        <p id="actor-picker-title" class="kicker" tabindex="-1">選んだ味方の命令</p>
+        <details class="actor-list-details">
+          <summary>味方一覧から選ぶ</summary>
+          <div id="actor-strip" class="actor-strip" role="group" aria-label="命令する味方"></div>
+        </details>
         <p id="actor-status" class="actor-status" role="status" aria-live="polite" tabindex="-1"></p>
-        <p class="actor-explain">「対象あり」は今の計画で指定可能という意味です。実行時の発動成功は保証しません。</p>
+        <details class="actor-help"><summary>対象表示について</summary><p class="actor-explain">「対象あり」は今の計画で指定可能という意味です。実行時の発動成功は保証しません。</p></details>
         <div id="actor-options" class="actor-options" aria-label="選んだ味方の命令"></div>
       </div>
 
@@ -151,11 +158,10 @@
       <p class="eyebrow">FIELD BRIEFING</p>
       <h2 id="modal-title">敵3体を倒して勝利を目指す。</h2>
       <div id="modal-body" class="modal-body">
-        <div class="brief-step"><b>1</b><span>戦場右の実行順で、敵味方の行動と速度を確認。</span></div>
-        <div class="brief-step"><b>2</b><span>味方を選び、そのキャラのカードと対象を選ぶ。手札から直接選んでもOK。</span></div>
-        <div class="brief-step"><b>3</b><span>1ターンに最大3命令。1件から「作戦実行」できます。</span></div>
-        <p>敵3体を全員倒せば勝利。味方3人が全員倒れると敗北。1ターンで勝つ必要はありません。</p>
-        <p>どのカードも「味方を1マス動かす」命令に変換できます。</p>
+        <div class="brief-step"><b>1</b><span>フィールドの味方を選ぶ。</span></div>
+        <div class="brief-step"><b>2</b><span>カードと対象を選ぶ。</span></div>
+        <div class="brief-step"><b>3</b><span>予測を見て「作戦実行」。1ターン最大3命令。</span></div>
+        <p>敵3体を倒せば勝利。味方が全滅すると敗北。詳しいルールは「?」から確認できます。</p>
       </div>
       <div id="modal-actions" class="modal-actions">
         <button id="modal-button" type="button" class="execute-button wide">案内つきで戦闘開始</button>

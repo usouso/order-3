@@ -1,150 +1,49 @@
 const SIZE = 6;
-const GAME_VERSION = "ACT 22";
+const GAME_VERSION = "ACT 24";
 const SPEED_ORDER = { fast: 0, normal: 1, slow: 2 };
 const SPEED_LABEL = { fast: "FAST", normal: "NORMAL", slow: "SLOW" };
 const WALLS = [{ x: 2, y: 2 }, { x: 3, y: 3 }];
 
 // Display-only contracts. Combat resolution never reads this catalogue.
 const effectRules = {
-  distance: { name: "距離と移動", text: "射程は上下左右のマス数で、斜め1マスは距離2です。射程だけを使う技は壁や駒の向こうにも届きます。接近移動は壁・生存駒を通れず、対象に隣接する空いた経路を進みます。経路がなければ移動せず、同条件なら右→左→下→上を優先します。罠で止まっても、生存して対象と上下左右に隣接していれば移動後の攻撃は行います。" },
-  targets: { name: "敵予告の対象", text: "敵の攻撃・庇護対象は予告時の人物で固定。移動後の位置を追いますが、倒れても別人へ選び直しません。災印は予告座標で固定し、生命吸収の回復先だけは技の実行時に選びます。最寄り・最遠の同距離では現在HPの少ない方を優先。それも同じなら、味方はルーク→ヴェイル→イオナ、敵は追跡獣→城壁兵→詠唱師の順です。" },
-  orders: { name: "速度・命令・不発", text: "FAST→NORMAL→SLOW。同速度は味方が先、味方同士は登録順、敵同士は追跡獣→城壁兵→詠唱師。最大3命令で、同じ味方も複数回行動できます。対象選択はその命令直前の予測状態を基準にします。実行時の戦闘不能・対象消失・射程外・移動先占有では不発となり、カードと命令枠は戻りません。済んだ部分効果は巻き戻しません。割って入るは射程の再判定をしません。生存する味方または敵がいなくなると勝敗が決まり、残りの行動は取り消されます。" },
-  damage: { name: "ダメージ・肩代わり", text: "技に記されたダメージは基本威力です。災印を元の対象の結界で防ぐ→肩代わり先を決める→実際の被害者の標的・露出を適用→装甲吸収→HP減少→条件を満たす近接反撃、の順に処理します。庇う側が生存し、指定した相手と上下左右に隣接する間、敵対側からのダメージを何度でも引き受けます。災印・罠・範囲攻撃の各被害も個別判定。付随する状態付与・解除は元の対象のままです。離れると一時中断し、同ターンに戻れば再び働きます。装甲0でも有効。新しい庇護対象への上書き・庇う側の戦闘不能・ターン末で終了します。" },
-  guard: { name: "装甲", text: "加算され、ダメージを先に吸収して吸収分だけ減ります。残りはターン末で消えます。反撃姿勢中は残る装甲全体が次の城壁兵の行動開始まで持続します。柄打ちは指定した敵の装甲を全て解除します。" },
-  ward: { name: "結界", text: "次の露出付与か災印ダメージを1回無効にして消費。未使用は次ターンへ持越し。盾の圧力の3ダメージ・生命吸収・通常攻撃・反撃は防ぎません。既にある露出は消さず、重ねても回数は増えません。" },
-  rooted: { name: "移動不能", text: "敵のこのターンの接近移動を封じます。攻撃や装甲付与など残りの行動は取り消しません。元から上下左右に隣接していれば攻撃を受けます。ターン末で解除します。" },
-  marked: { name: "標的（狩人の印）", text: "次の味方由来ダメージ+3。火種の罠と連鎖火花の本体分を含み、連鎖分は除きます。発動時に消費し、装甲で全吸収されても消費。未使用は持越し、重ねても威力や回数は増えません。肩代わり時は実際の被害者の標的を使い、元の対象の標的は消費しません。" },
-  exposed: { name: "露出", text: "次の敵由来ダメージ+1。通常攻撃・反撃・災印の被害が対象です。発動時に消費し、装甲で全吸収されても消費。未使用は持越し、重ねても+2にはなりません。結界で災印を防いだ場合や肩代わりされた元の対象の露出は消費しません。" },
-  charge: { name: "帯電", text: "敵がこのターンに実際に回復したHPを加算し、合計上限2。その敵を連鎖火花の対象にすると、上下左右への連鎖ダメージをこの値だけ増やします。攻撃直前に連鎖先が1体以上あれば全消費。斜めだけ・連鎖先なしなら残ります。未消費でもターン末で0になります。" },
-  counter: { name: "反撃準備", text: "威力4、残り1回。近接攻撃を受けた後も城壁兵が生存し、生存する攻撃者と上下左右に隣接していると反撃します。元攻撃を装甲で全吸収しても発動。近接とは踏み込み斬り・柄打ちで、隣接して撃つ射撃や魔法では発動しません。庇護経由も同じ条件です。装甲0でも準備は残り、発動・城壁兵自身への柄打ち・次の城壁兵の行動開始で準備が終了します。" },
-  legacy: { name: "遺志とALT", text: "持ち主が既に戦闘不能の手札は、元の技に代わる遺志として使えます。3種ともFAST、距離無制限。登録済みの固有技は途中で持ち主が倒れても遺志に自動変換せず不発です。遺志の対象が実行前に倒れても不発。全カードは遺志も含め、効果の代わりにFASTのALT移動へ変換できます。生存味方がいなくなると敗北です。" },
-  turn: { name: "次ターンと最終予測", text: "最終予測は全行動直後で、ターン末の解除や次のドローより前です。余った手札と使用カードは捨て札へ。山札が空なら捨て札を混ぜて5枚まで引き直します。通常装甲・移動不能・庇護・帯電はターン末で解除。結界・標的・露出、未発動の罠と災印は残ります。反撃姿勢の装甲と未使用反撃は次の城壁兵の行動開始まで残ります。" }
+  distance: { name: "距離と移動", text: "射程は上下左右のマス数。接近は壁・生存駒を通らず、隣接する空き位置へ右→左→下→上の順で探します。足止めや経路なしなら動きません。罠で止まっても、生存して隣接なら攻撃できます。" },
+  targets: { name: "敵予告の対象", text: "敵の対味方行動はターン開始時の最寄りの生存味方を固定。同距離ならHPが低い方、さらに同じならルーク→ヴェイル→イオナ。予告後は選び直さず、災印も予告座標に固定します。" },
+  orders: { name: "速度と命令", text: "FAST→NORMAL→SLOW。同速度は味方先、味方は登録順、敵は追跡獣→城壁兵→詠唱師。1～3命令で実行。対象は命令直前の予測で選び、実行時に戦闘不能・射程外・占有なら不発。全敵または全味方の戦闘不能で残りは取消。" },
+  damage: { name: "ダメージ", text: "目印がある敵への次の味方由来ダメージに+3して目印を消費。装甲で全吸収しても消費します。その後装甲が吸収し、残りだけHPが減ります。" },
+  guard: { name: "装甲", text: "装甲は加算でき、HPより先にダメージを吸収。残りはターン末に消えます。柄打ちは指定した敵の装甲を0にしてから攻撃します。" },
+  rooted: { name: "足止め", text: "このターンの接近移動を止めます。攻撃は取り消さず、既に隣接していれば攻撃を受けます。ターン末に消えます。" },
+  marked: { name: "目印", text: "このターン、次にその敵が受ける味方由来ダメージ+3。一回で消費、装甲で全吸収しても消費。重ねても増えず、未使用ならターン末に消えます。連鎖火花の各被害者で独立に判定します。" },
+  terrain: { name: "罠と災印", text: "火種の罠は敵進入時に一回だけ3ダメージと移動停止。未発動でもターン末に消えます。災印は予告した十字マスへ置き、次ターンの起爆時にそこにいる生存味方へ各4ダメージ。起爆後も詠唱師の戦闘不能による取消時も消えます。同じマスに重ねません。" },
+  legacy: { name: "遺志とALT", text: "持ち主が戦闘不能の手札は共通FASTの遺志として、生存味方一人へ距離無制限で装甲+2。登録後に持ち主が倒れた固有技は変換せず不発。どのカードも代わりにFASTのALT移動へ変換できます。" },
+  turn: { name: "ターン末", text: "HPと位置は残ります。装甲・足止め・目印・未発動の火種の罠はターン末に消え、災印は次ターンの起爆まで残ります。余った手札と使用カードは捨て札へ。山札が空なら混ぜて5枚まで引きます。最終予測はこの解除とドロー前。" },
 };
 
 const effectCatalog = {
-  stalk: {
-    name: "忍び寄る", speed: "fast", group: "enemy",
-    short: "対象へ最大2マス接近し、上下左右に隣接すれば2ダメージ。",
-    detail: ["予告時に距離が最短の生存味方を選び、固定した対象の実行時位置へ追います。空いた経路を通り、隣接位置で止まります。移動不能・罠で止まっても生存・隣接なら攻撃し、届かなければ攻撃しません。"], rules: ["targets", "distance", "damage", "rooted", "orders"]
-  },
-  pounce: {
-    name: "飛びかかり", speed: "normal", group: "enemy",
-    short: "対象へ最大3マス接近し、上下左右に隣接すれば4ダメージ。",
-    detail: ["予告時に距離が最長の生存味方を固定し、実行時の位置へ追います。壁や駒を飛び越えません。移動不能・罠で止まっても生存・隣接なら攻撃し、届かなければ攻撃しません。"], rules: ["targets", "distance", "damage", "rooted", "orders"]
-  },
-  recover: {
-    name: "息を整える", speed: "slow", group: "enemy",
-    short: "最初から対象と上下左右に隣接していれば2ダメージ。離れていれば最大1マス接近し、攻撃はしない。",
-    detail: ["予告時の最寄りの生存味方を固定します。隣接の判定はこの技の開始時。移動して隣接しても攻撃しません。HP回復や移動不能への耐性変化はありません。"], rules: ["targets", "distance", "damage", "rooted", "orders"]
-  },
-  cover: {
-    name: "庇護", speed: "fast", group: "enemy",
-    short: "対象に装甲+4。発動時に上下左右で隣接していれば、このターンその敵を庇う。",
-    detail: ["予告時に城壁兵以外の生存敵から現在HP最少の1体を固定します。満タンも候補で、他に敵がいなければ自身。距離制限なしで、隣接できなくても装甲は付与します。", "発動時に隣接して成立した庇護は、城壁兵が生存・隣接中、その敵への味方由来ダメージを何度でも肩代わりします。後から近づくだけでは新規成立しません。ターン末で庇護は終了します。"], rules: ["targets", "guard", "damage", "orders"]
-  },
-  shield_drive: {
-    name: "盾の圧力", speed: "normal", group: "enemy",
-    short: "対象へ最大1マス接近。上下左右に隣接すれば3ダメージを与え、対象に露出を付与。",
-    detail: ["予告時の最寄りの生存味方を固定。移動後も城壁兵と対象が生存し、上下左右に隣接する場合だけ攻撃します。罠で城壁兵が倒れれば攻撃も露出も不発です。", "ダメージ後に元の対象が生存していれば露出を付与。肩代わりされても露出は元の対象へ。結界は露出だけを防いで消費します。新しい露出はこの3ダメージを増やさず、次の敵由来ダメージを+1します。"], rules: ["targets", "distance", "damage", "ward", "exposed", "orders"]
-  },
-  brace: {
-    name: "反撃姿勢", speed: "slow", group: "enemy",
-    short: "自身に装甲+6と近接反撃4を1回準備。次の自分の行動開始まで持続。",
-    detail: ["装甲は加算され、残る装甲全体と未使用の反撃が次の城壁兵の行動開始まで続きます。近接攻撃後も生存し、攻撃者に上下左右で隣接していれば4ダメージで反撃して準備を消費します。", "城壁兵自身への柄打ちはダメージより先に反撃を解除します。射撃・魔法は隣接していても反撃の対象外です。"], rules: ["guard", "counter", "damage", "turn"]
-  },
-  inscribe: {
-    name: "災印を刻む", speed: "fast", group: "enemy",
-    short: "予告マスに災印を設置。次ターンの起爆で、そのマスにいる味方へ各4ダメージ。",
-    detail: ["予告時に装甲が最少の生存味方を中心にし、同装甲なら現在HP最少を優先。中心と上下左右の最大5マスから壁・盤外を除いた座標で固定します。距離制限はありません。", "中心人物の移動や戦闘不能を追わず、既存の災印配置を置き換えます。設置時はダメージなし。柄打ちで取り消す詠唱ではありません。次ターンの起爆には詠唱師の生存など実行条件が必要で、詠唱師が倒れても設置済みの災印は残ります。"], rules: ["targets", "orders", "turn"]
-  },
-  detonate: {
-    name: "災印起爆", speed: "slow", group: "enemy",
-    short: "災印上の味方全員に地形ダメージ4。発動前の柄打ちで取り消せる。",
-    detail: ["距離に関係なく、実行時に災印上にいる生存味方だけに被害を与えます。敵には当たりません。結界はその味方の地形ダメージを1回防いで消費します。", "通常起爆・柄打ちによる取消では、この起爆イベントの順番で災印を全て消します。詠唱師が戦闘不能なら不発ですが、その理由だけでは災印は消えません。柄打ちが取り消す詠唱は現在この技だけです。"], rules: ["damage", "ward", "exposed", "orders", "turn"]
-  },
-  drain: {
-    name: "生命吸収", speed: "normal", group: "enemy",
-    short: "対象に2ダメージ。負傷した敵のうちHP最少の1体を最大2回復＋実回復分の帯電（合計上限2）。",
-    detail: ["攻撃対象：予告時に現在HPが最も少ない生存味方1人を固定し、距離に関係なく2ダメージ。予告後に対象を選び直しません。", "回復先：攻撃処理の後、実行時に生存している負傷した敵のうち現在HPが最も少ない1体を最大2回復します。詠唱師自身も対象。回復した敵に、実際に回復したHPと同じ値の帯電を加算します（合計上限2）。回復先は実行時に決定します。", "攻撃対象が実行前に戦闘不能なら、攻撃・回復・帯電は全て不発。装甲や肩代わりで対象のHPが減らなくても回復します。この攻撃で対象を倒した場合も回復します。敵全員が満タンなら回復0・帯電加算0、回復余地が1なら回復1・帯電+1、2以上なら回復2・帯電+2（既存分との合計上限2）。", "同じ現在HPなら攻撃対象はルーク→ヴェイル→イオナ、回復先は追跡獣→城壁兵→詠唱師の順です。帯電は連鎖火花の上下左右への連鎖を増幅し、連鎖先があれば全消費。未消費でもターン末で消えます。"], rules: ["charge", "damage", "targets", "orders"]
-  },
-  forward_cut: {
-    name: "踏み込み斬り", speed: "normal", group: "card",
-    short: "射程2。距離2なら上下左右へ1マス接近し、隣接した敵に近接3ダメージ。",
-    detail: ["生存敵1体が対象。最初から上下左右に隣接なら移動せず攻撃します。距離2でも通れる経路がなければ接近できず、接近後に隣接していなければ攻撃は不発。済んだ移動は巻き戻しません。斜めのまま攻撃はしません。"], rules: ["distance", "damage", "counter", "orders", "legacy"]
-  },
-  interpose: {
-    name: "割って入る", speed: "fast", group: "card",
-    short: "対象：2マス以内の他の味方。最大2マス接近し、届かなくても両者に装甲+2。",
-    detail: ["生存する他の味方へ空いた経路を進み、隣接位置で止まります。既に隣接なら移動なし。接近が成立しなくても両者へ装甲を加算します。", "対象が登録後に遠ざかっても、実行時の射程再判定をせず接近と付与を行います。装甲はターン末まで。この技は肩代わりを付与しません。"], rules: ["distance", "guard", "orders", "legacy"]
-  },
-  shield_lock: {
-    name: "盾を固める", speed: "fast", group: "card",
-    short: "自身に装甲+5。このターン、発動時に上下左右へ隣接する味方1人へのダメージを、隣接中は何度でも肩代わり。",
-    detail: ["自身が対象。発動時に隣接する生存味方からヴェイル→イオナの順で1人を自動選択して固定します。隣接味方がいなければ装甲だけ。後から近づくだけでは新規成立しません。", "離れている間は中断し、同ターン内に隣接へ戻れば復活。装甲0でも生存・隣接なら肩代わりを続けます。ダメージだけを引き受け、付随する露出は元の対象へ。装甲と庇護はターン末に終了します。"], rules: ["guard", "damage", "orders", "legacy"]
-  },
-  pommel_break: {
-    name: "柄打ち", speed: "normal", group: "card",
-    short: "上下左右に隣接する敵の装甲と反撃準備を解除し、近接2ダメージ。このターン後で行う、その敵の災印起爆も取り消す。",
-    detail: ["射程1、生存敵1体が対象。装甲・反撃準備・装甲の持続を先に解除してからダメージを与えます。", "取り消せるのはこのターンに後で行う対象の災印起爆だけ。災印設置・生命吸収は取り消さず、既に済んだ起爆や未来ターンへ解除を予約しません。取消済み災印が消えるのは起爆イベントの順番です。", "庇護時も解除は指定した元の敵へ。ダメージだけが城壁兵へ移るため、城壁兵側の装甲・反撃準備まで解除しません。その城壁兵が生存し攻撃者に隣接していれば反撃を受けます。"], rules: ["damage", "guard", "counter", "orders", "legacy"]
-  },
-  quickshot: {
-    name: "速射", speed: "fast", group: "card", short: "射程3。敵1体に2ダメージ。",
-    detail: ["生存敵の実行時位置で射程を再判定します。壁や駒による射線遮断なし。隣接して撃っても近接反撃の対象外です。状態や詠唱を直接解除せず、撃破による後続行動取消とは区別します。"], rules: ["distance", "damage", "orders", "legacy"]
-  },
-  pinning_arrow: {
-    name: "縫い留め", speed: "fast", group: "card",
-    short: "射程4。敵1体に1ダメージ。対象が生存していれば、このターンの接近移動を封じる。",
-    detail: ["生存敵の実行時位置で射程を再判定。ダメージ後に元の対象が生存していれば移動不能を付与し、肩代わり先へは移しません。全ダメージを装甲で吸収されても付与します。", "攻撃や他の行動は取り消さず、元から隣接していれば攻撃を受けます。移動不能はターン末で解除します。"], rules: ["distance", "damage", "rooted", "orders", "legacy"]
-  },
-  backstep_shot: {
-    name: "離脱射撃", speed: "normal", group: "card",
-    short: "射程3。敵1体に2ダメージ後、上下左右の空きマスのうち対象から最も遠いマスへ1マス移動。",
-    detail: ["生存敵の実行時位置で射程を再判定。射撃は近接反撃の対象外。空き隣接マスがなければ攻撃だけです。", "移動先は自動で決まり、対象を倒してもその元の位置を基準にします。遠ざかれる空きマスがなければ近づく場合もあります。同距離の候補は右→左→下→上の順です。"], rules: ["distance", "damage", "orders", "legacy"]
-  },
-  hunters_mark: {
-    name: "狩人の印", speed: "slow", group: "card",
-    short: "射程4。敵1体に標的を付与。次の味方由来のダメージ+3（連鎖火花の連鎖分を除く）。",
-    detail: ["生存敵の実行時位置で射程を再判定。付与自体にダメージはなく、発動時に消費、未発動は次ターンへ持ち越します。重ねても+6や回数追加にはなりません。"], rules: ["marked", "distance", "damage", "orders", "legacy"]
-  },
-  arc_spark: {
-    name: "連鎖火花", speed: "slow", group: "card",
-    short: "射程3。敵1体に3ダメージ、その上下左右の敵全員に2＋対象の帯電（最大4）ダメージ。連鎖先があれば対象の帯電を全消費。",
-    detail: ["生存敵の実行時位置で射程を再判定。本体攻撃の直前に、対象の帯電と上下左右の生存敵を決めます。元の対象を倒しても連鎖し、斜めや二段先へは連鎖しません。", "本体分には標的が働きますが、連鎖分では標的を加算・消費しません。連鎖先なしなら帯電は残ります。中心と帯電は指定した対象のもので、肩代わり先へ中心は移りません。各ダメージに装甲と肩代わりが個別に働きます。"], rules: ["charge", "marked", "distance", "damage", "orders", "legacy"]
-  },
-  phase_step: {
-    name: "位相交換", speed: "fast", group: "card", short: "射程3。自身と他の味方1人の位置を交換。",
-    detail: ["自身と対象の両方が生存している必要があり、実行時の位置で射程を再判定します。敵や任意の味方2人同士は選べません。", "交換は経路を通らず、途中の壁や駒を飛び越えます。HPや状態は各人物に残り、交換後の庇護は隣接条件で決まります。"], rules: ["distance", "damage", "orders", "legacy"]
-  },
-  null_sigil: {
-    name: "無効印", speed: "fast", group: "card",
-    short: "射程3。自身を含む味方1人に結界。次の露出付与か災印ダメージを1回無効化。",
-    detail: ["生存味方の実行時位置で射程を再判定。結界は無効化時に消費し、未使用は次ターンへ持越し。既にある露出は治療せず、重ねても回数は増えません。"], rules: ["ward", "distance", "orders", "legacy"]
-  },
-  ember_rune: {
-    name: "火種の罠", speed: "normal", group: "card",
-    short: "射程3の空きマスに罠を設置。敵が踏むと3ダメージ、その移動の残りを止め、罠1個が消滅。",
-    detail: ["実行時にも射程と空きマスを確認。味方が踏んでも発動せず、未発動なら次ターン以降も残ります。同じ空きマスへ重ね置きでき、入るたびに1個だけ発動します。駒や壁がなければ、罠のあるマスも設置・移動に使えます。", "移動不能を付けず、その移動だけを止めます。停止後も敵が生存して対象へ隣接していれば移動後攻撃は残ります。ダメージは標的・装甲・城壁兵の庇護の対象ですが、肩代わりされても止まるのは踏んだ敵です。術者が倒れても設置済み罠は残ります。"], rules: ["distance", "damage", "marked", "orders", "turn", "legacy"]
-  },
-  legacy_rook: {
-    name: "遺志：守護", speed: "fast", group: "legacy",
-    short: "距離に関係なく、生存中の味方1人に装甲+2。ターン終了で消える。",
-    detail: ["ルークの遺志。肩代わりは付与しません。対象が実行前に戦闘不能なら不発です。"], rules: ["guard", "legacy", "orders"]
-  },
-  legacy_vale: {
-    name: "遺志：照準", speed: "fast", group: "legacy",
-    short: "距離に関係なく、敵1体に標的。次の味方由来ダメージ+3（連鎖火花の連鎖分を除く）。発動時消費、未発動は持越し。",
-    detail: ["ヴェイルの遺志。生存敵1体へ付与し、付与自体のダメージはありません。対象が実行前に戦闘不能なら不発です。"], rules: ["marked", "damage", "legacy", "orders"]
-  },
-  legacy_iona: {
-    name: "遺志：残響", speed: "fast", group: "legacy",
-    short: "距離に関係なく、生存中の味方1人に結界。次の露出付与か災印ダメージを1回無効化し、未使用なら持越し。",
-    detail: ["イオナの遺志。対象が実行前に戦闘不能なら不発です。"], rules: ["ward", "legacy", "orders"]
-  },
-  move: {
-    name: "ALT：移動命令", speed: "fast", group: "common",
-    short: "固有技・遺志の代わりに、任意の生存味方を上下左右の空きマスへ1マス移動。FAST。",
-    detail: ["カードの持ち主や元の速度に関係なく使えます。動かす味方と移動先を順に選び、固有技・遺志の効果は発生しません。実行時に動かす味方が戦闘不能、移動先が隣接外・占有済みなら不発です。壁や駒を通り抜けません。"], rules: ["distance", "orders", "legacy"]
-  }
+  stalk: { name: "忍び寄る", speed: "fast", group: "enemy", short: "最寄りの味方へ最大2歩接近し、隣接なら2ダメージ。", detail: ["対象はターン開始時に固定。壁と駒を避け、移動できなくても隣接なら攻撃。"], rules: ["targets", "distance", "damage", "rooted"] },
+  pounce: { name: "飛びかかり", speed: "normal", group: "enemy", short: "最寄りの味方へ最大3歩接近し、隣接なら4ダメージ。", detail: ["対象はターン開始時に固定。届かなければ攻撃なし。"], rules: ["targets", "distance", "damage", "rooted"] },
+  recover: { name: "息を整える", speed: "slow", group: "enemy", short: "最寄りの味方へ最大1歩接近し、隣接なら2ダメージ。", detail: ["移動後も隣接なら攻撃。HP回復はしません。"], rules: ["targets", "distance", "damage", "rooted"] },
+  cover: { name: "装甲支援", speed: "fast", group: "enemy", short: "詠唱師が生存なら詠唱師、そうでなければ自身に装甲+4。", detail: ["距離制限なし。ダメージの移し替えはありません。"], rules: ["guard", "orders"] },
+  shield_drive: { name: "盾の圧力", speed: "normal", group: "enemy", short: "最寄りの味方へ最大1歩接近し、隣接なら3ダメージ。", detail: ["対象はターン開始時に固定。追加の状態効果なし。"], rules: ["targets", "distance", "damage", "rooted"] },
+  brace: { name: "構え", speed: "fast", group: "enemy", short: "自身に装甲+6。残りはターン末に消える。", detail: ["他の装甲と加算します。"], rules: ["guard", "turn"] },
+  inscribe: { name: "災印を刻む", speed: "fast", group: "enemy", short: "最寄りの味方の十字マスに災印。次ターンに各4ダメージ。", detail: ["予告された中心と上下左右の壁・盤外以外の座標へ設置。設置時はダメージなし。"], rules: ["targets", "terrain", "orders"] },
+  detonate: { name: "災印起爆", speed: "slow", group: "enemy", short: "災印上の生存味方に各4ダメージを与え、災印を消す。", detail: ["敵には当たりません。詠唱師が戦闘不能で取消でも、この行動順に災印を消します。"], rules: ["terrain", "damage", "orders"] },
+  drain: { name: "生命吸収", speed: "normal", group: "enemy", short: "最寄りの味方に2ダメージ、自身を最大2回復。", detail: ["対象はターン開始時に固定。対象が戦闘不能なら不発。詠唱師自身のHP上限を超えて回復しません。"], rules: ["targets", "damage", "orders"] },
+  forward_cut: { name: "踏み込み斬り", speed: "normal", group: "card", short: "敵・射程2。距離2なら1歩接近、隣接なら3ダメージ。", detail: ["隣接して始めれば移動なし。接近後も隣接できなければ攻撃は不発。"], rules: ["distance", "damage", "orders", "legacy"] },
+  interpose: { name: "割って入る", speed: "fast", group: "card", short: "他の味方・射程2。最大2歩接近し、経路なしでも両者に装甲+2。", detail: ["実行時に射程を再判定せず、対象への空き経路を進みます。登録前の対象別仮予測で経路を確認できます。"], rules: ["distance", "guard", "orders", "legacy"] },
+  shield_lock: { name: "盾を固める", speed: "fast", group: "card", short: "自身に装甲+5。", detail: ["装甲は加算し、ターン末に残りが消えます。"], rules: ["guard", "turn", "legacy"] },
+  pommel_break: { name: "柄打ち", speed: "normal", group: "card", short: "隣接する敵の装甲を0にして2ダメージ。", detail: ["解除するのは指定敵の装甲だけ。災印の起爆は妨げません。"], rules: ["guard", "damage", "orders", "legacy"] },
+  quickshot: { name: "速射", speed: "fast", group: "card", short: "敵・射程3。2ダメージ。", detail: ["実行時の位置で射程を再判定します。"], rules: ["distance", "damage", "orders", "legacy"] },
+  pinning_arrow: { name: "縫い留め", speed: "fast", group: "card", short: "敵・射程4。1ダメージ、生存していれば足止め。", detail: ["装甲に全吸収されても、生存していれば足止め。ターン末に消えます。"], rules: ["distance", "damage", "rooted", "legacy"] },
+  backstep_shot: { name: "離脱射撃", speed: "normal", group: "card", short: "敵・射程3。2ダメージ後、空き隣接マスへ1歩退く。", detail: ["対象から最も遠い空きマスを選び、同距離なら右→左→下→上。空きがなければ攻撃だけ。"], rules: ["distance", "damage", "orders", "legacy"] },
+  hunters_mark: { name: "狩人の印", speed: "fast", group: "card", short: "敵・射程4。目印を付け、次の味方ダメージ+3。", detail: ["一回で消費、装甲で全吸収されても消費。未使用ならターン末に消えます。"], rules: ["marked", "damage", "orders", "legacy"] },
+  arc_spark: { name: "連鎖火花", speed: "slow", group: "card", short: "敵・射程3。中心へ3、隣接する敵全員へ各2ダメージ。", detail: ["中心を倒しても隣接被害は発生。各敵の目印は独立に判定します。"], rules: ["distance", "damage", "marked", "legacy"] },
+  phase_step: { name: "位相交換", speed: "fast", group: "card", short: "他の味方・射程3。自分とその味方の位置を交換。", detail: ["二人が生存していれば実行時の射程を確認し、壁や駒を越えて交換します。"], rules: ["distance", "orders", "legacy"] },
+  null_sigil: { name: "無効印", speed: "fast", group: "card", short: "味方・射程3。装甲+3。", detail: ["自身も対象にできます。残った装甲はターン末に消えます。"], rules: ["guard", "distance", "legacy"] },
+  ember_rune: { name: "火種の罠", speed: "normal", group: "card", short: "空きマス・射程3。敵進入時に3ダメージと移動停止。", detail: ["一回発動すると消え、未発動でもターン末に消えます。同じマスへ重ね置きしません。"], rules: ["terrain", "distance", "damage", "legacy"] },
+  legacy_rook: { name: "遺志：装甲", speed: "fast", group: "legacy", short: "生存味方1人に装甲+2。距離無制限。", detail: ["持ち主が倒れたカードの共通効果です。"], rules: ["guard", "legacy"] },
+  legacy_vale: { name: "遺志：装甲", speed: "fast", group: "legacy", short: "生存味方1人に装甲+2。距離無制限。", detail: ["持ち主が倒れたカードの共通効果です。"], rules: ["guard", "legacy"] },
+  legacy_iona: { name: "遺志：装甲", speed: "fast", group: "legacy", short: "生存味方1人に装甲+2。距離無制限。", detail: ["持ち主が倒れたカードの共通効果です。"], rules: ["guard", "legacy"] },
+  move: { name: "ALT：移動命令", speed: "fast", group: "common", short: "生存味方1人を空き隣接マスへ1歩移動。", detail: ["カードの持ち主を問わず技の代わりに使えます。"], rules: ["distance", "orders", "legacy"] },
 };
 
 const cardDefs = {
@@ -184,7 +83,7 @@ const cardDefs = {
     target: "enemy", range: 3, categories: ["attack", "mobility"]
   },
   hunters_mark: {
-    ownerId: "vale", name: "狩人の印", speed: "slow",
+    ownerId: "vale", name: "狩人の印", speed: "fast",
     text: effectCatalog.hunters_mark.short,
     target: "enemy", range: 4, categories: ["control"], categoryDetail: "印"
   },
@@ -228,34 +127,17 @@ const statusMeta = {
   guard: {
     order: 1, label: "装甲", short: unit => `盾${unit.guard}`,
     active: unit => unit.guard > 0, shape: "shield", tone: "amber",
-    detail: unit => unit.persistentGuard
-      ? `装甲${unit.guard}。反撃姿勢の残りは次の城壁兵の行動開始まで。${effectRules.guard.text}`
-      : `装甲${unit.guard}。${effectRules.guard.text}`
-  },
-  ward: {
-    order: 2, label: "結界", short: () => "結",
-    active: unit => unit.ward === true, shape: "double-ring", tone: "violet",
-    detail: () => effectRules.ward.text
+    detail: unit => `装甲${unit.guard}。${effectRules.guard.text}`
   },
   rooted: {
-    order: 3, label: "移動不能", short: () => "鎖",
+    order: 2, label: "足止め", short: () => "止",
     active: unit => unit.rooted === true, shape: "linked-square", tone: "blue",
     detail: () => effectRules.rooted.text
   },
   marked: {
-    order: 4, label: "標的（狩人の印）", short: () => "標",
+    order: 3, label: "目印", short: () => "印",
     active: unit => unit.marked === true, shape: "crosshair-circle", tone: "yellow",
     detail: () => effectRules.marked.text
-  },
-  exposed: {
-    order: 5, label: "露出", short: () => "露",
-    active: unit => unit.exposed === true, shape: "warning-triangle", tone: "rose",
-    detail: () => effectRules.exposed.text
-  },
-  charge: {
-    order: 6, label: "帯電", short: unit => `⚡${unit.charge}`,
-    active: unit => unit.charge > 0, shape: "lightning", tone: "orange",
-    detail: unit => `帯電${unit.charge}。${effectRules.charge.text}`
   }
 };
 
@@ -424,9 +306,7 @@ function makeUnits() {
 function makeUnit(id, name, icon, side, hp, x, y, role) {
   return {
     id, name, icon, side, role, hp, maxHp: hp, x, y,
-    guard: 0, ward: false, rooted: false, marked: false,
-    exposed: false, coveringId: null, counter: 0, persistentGuard: false,
-    channelCancelled: false, charge: 0
+    guard: 0, rooted: false, marked: false
   };
 }
 
@@ -627,11 +507,9 @@ function isProjectedEmpty(x, y, positions = projectedLayout()) {
 }
 
 function nearestUnit(source, candidates) {
-  return [...candidates].sort((a, b) => distance(source, a) - distance(source, b) || a.hp - b.hp)[0];
-}
-
-function farthestUnit(source, candidates) {
-  return [...candidates].sort((a, b) => distance(source, b) - distance(source, a) || a.hp - b.hp)[0];
+  const roster = ["rook", "vale", "iona"];
+  return [...candidates].sort((a, b) => distance(source, a) - distance(source, b)
+    || a.hp - b.hp || roster.indexOf(a.id) - roster.indexOf(b.id))[0];
 }
 
 function buildEnemyIntents() {
@@ -647,7 +525,7 @@ function buildEnemyIntents() {
       intents.push(intent(pursuer, "stalk", "忍び寄る", "fast", target,
         effectCatalog.stalk.short));
     } else if (phase === 1) {
-      const target = farthestUnit(pursuer, players);
+      const target = nearestUnit(pursuer, players);
       intents.push(intent(pursuer, "pounce", "飛びかかり", "normal", target,
         effectCatalog.pounce.short));
     } else {
@@ -661,25 +539,24 @@ function buildEnemyIntents() {
   if (bastion.hp > 0) {
     const phase = (game.turn - 1) % 3;
     if (phase === 0) {
-      const allies = living("enemy").filter(unit => unit.id !== "bastion");
-      const target = [...allies].sort((a, b) => a.hp - b.hp)[0] || bastion;
-      intents.push(intent(bastion, "cover", "庇護", "fast", target,
+      const target = getUnit("cantor").hp > 0 ? getUnit("cantor") : bastion;
+      intents.push(intent(bastion, "cover", "装甲支援", "fast", target,
         effectCatalog.cover.short));
     } else if (phase === 1) {
       const target = nearestUnit(bastion, players);
       intents.push(intent(bastion, "shield_drive", "盾の圧力", "normal", target,
         effectCatalog.shield_drive.short));
     } else {
-      intents.push(intent(bastion, "brace", "反撃姿勢", "slow", bastion,
+      intents.push(intent(bastion, "brace", "構え", "fast", bastion,
         effectCatalog.brace.short));
     }
   }
 
   const cantor = getUnit("cantor");
-  if (cantor.hp > 0) {
+  if (cantor.hp > 0 || ((game.turn - 1) % 3 === 1 && game.hostileRunes.length)) {
     const phase = (game.turn - 1) % 3;
     if (phase === 0) {
-      const target = [...players].sort((a, b) => a.guard - b.guard || a.hp - b.hp)[0];
+      const target = nearestUnit(cantor, players);
       const cells = [target, ...neighbors(target)].filter(cell => !isWall(cell.x, cell.y));
       const result = intent(cantor, "inscribe", "災印を刻む", "fast", target,
         effectCatalog.inscribe.short, cells, { targetKind: "cells" });
@@ -687,9 +564,9 @@ function buildEnemyIntents() {
     } else if (phase === 1) {
       intents.push(intent(cantor, "detonate", "災印起爆", "slow", null,
         effectCatalog.detonate.short, [...game.hostileRunes],
-        { targetKind: "cells", channel: true }));
+        { targetKind: "cells" }));
     } else {
-      const target = [...players].sort((a, b) => a.hp - b.hp)[0];
+      const target = nearestUnit(cantor, players);
       intents.push(intent(cantor, "drain", "生命吸収", "normal", target,
         effectCatalog.drain.short));
     }
@@ -731,9 +608,7 @@ function setMode(mode) {
 }
 
 function getLegacy(ownerId) {
-  if (ownerId === "rook") return { name: "遺志：守護", text: effectCatalog.legacy_rook.short, target: "ally", speed: "fast", categories: ["defense"] };
-  if (ownerId === "vale") return { name: "遺志：照準", text: effectCatalog.legacy_vale.short, target: "enemy", speed: "fast", range: 99, categories: ["control"], categoryDetail: "印" };
-  return { name: "遺志：残響", text: effectCatalog.legacy_iona.short, target: "ally", speed: "fast", categories: ["defense"] };
+  return { name: "遺志：装甲", text: effectCatalog[`legacy_${ownerId}`].short, target: "ally", speed: "fast", categories: ["defense"] };
 }
 
 function provisionalActionForSelection(providedSelection = null) {
@@ -872,7 +747,7 @@ function interposeCandidateForecasts() {
     let movementReason = "";
     if (outcome.status === "cancelled") movementReason = `取消：${outcome.reason}`;
     else if (!actorBefore || !targetBefore || !actorAfter || !targetAfter) movementReason = "現在計画では経路を表示できません";
-    else if (actorBefore.rooted) movementReason = "移動不能のため移動0";
+    else if (actorBefore.rooted) movementReason = "足止めのため移動0";
     else {
       const evidence = { excluded: [], pathResult: null };
       entered = simPathToAdjacent(before, actorBefore, targetBefore, evidence).slice(0, 2);
@@ -969,7 +844,7 @@ function firstPriorDefeatEvent(context, unitId, startingHp) {
   return null;
 }
 
-function chooseActor(unitId) {
+function chooseActor(unitId, focusSource = "list") {
   const unit = getUnit(unitId);
   if (game.phase !== "planning" || !unit || unit.side !== "player" || unit.hp <= 0) return;
   if (enemyTrace) { enemyTrace = null; game.previewIndex = null; }
@@ -977,7 +852,10 @@ function chooseActor(unitId) {
   activeActorId = unitId;
   actorChoice = null;
   render();
-  el.actorStrip.querySelector(`[data-actor-id="${unitId}"]`)?.focus({ preventScroll: true });
+  const focusTarget = focusSource === "board"
+    ? el.board.querySelector(`[data-unit-id="${unitId}"]`)
+    : el.actorStrip.querySelector(`[data-actor-id="${unitId}"]`);
+  focusTarget?.focus({ preventScroll: true });
 }
 
 function actorTechniqueCandidate(card) {
@@ -1022,7 +900,7 @@ function renderActorPanel() {
     button.dataset.actorId = ownerId;
     button.setAttribute("aria-pressed", String(activeActorId === ownerId));
     button.disabled = game.phase !== "planning" || unit.hp <= 0;
-    button.innerHTML = `<strong>${unit.name}</strong><small>${unit.role} · 実HP ${unit.hp}/${unit.maxHp} · 固有カード ${count}枚</small>`;
+    button.innerHTML = `<strong>${unit.name}</strong><small>HP ${unit.hp}/${unit.maxHp} · 手札 ${count}枚</small>`;
     button.setAttribute("aria-label", `${unit.name}、${unit.role}、実HP ${unit.hp}/${unit.maxHp}、手札の固有カード ${count}枚、${activeActorId === ownerId ? "選択中" : "選択する"}、残り${3 - game.queue.length}命令`);
     button.addEventListener("click", () => chooseActor(ownerId));
     el.actorStrip.appendChild(button);
@@ -1033,7 +911,7 @@ function renderActorPanel() {
     return;
   }
   const owned = game.hand.filter(card => cardDefs[card.cardId].ownerId === actor.id);
-  const status = `${actor.name}を選択中。残り${3 - game.queue.length}命令。この命令の直前で対象を判定します。${full ? "命令枠が満杯です。1手戻すか作戦実行してください。" : ""}`;
+  const status = `${actor.name}を選択中 · 残り${3 - game.queue.length}命令${full ? "。1手戻すか作戦実行してください。" : ""}`;
   if (el.actorStatus.textContent !== status) el.actorStatus.textContent = status;
   if (!owned.length && actorChoice !== "alt-pick") {
     const empty = document.createElement("p");
@@ -1050,9 +928,9 @@ function renderActorPanel() {
     button.setAttribute("aria-pressed", String(game.selectedInstanceId === card.instanceId && game.mode === "technique"));
     button.className = result.targets.length ? "" : "no-target";
     button.disabled = full;
-    button.innerHTML = `<strong>${def.name}</strong><small>${SPEED_LABEL[def.speed]} · ${cardCategorySummary(def)} · 対象: ${def.target === "self" ? "自身" : def.target === "enemy" ? "敵" : def.target === "empty" ? "空きマス" : "味方"}</small>`;
+    button.innerHTML = `<strong>${def.name}</strong><small>${SPEED_LABEL[def.speed]} · ${def.target === "self" ? "自身" : def.target === "enemy" ? "敵" : def.target === "empty" ? "空きマス" : "味方"}が対象</small>`;
     const reason = document.createElement("small");
-    reason.textContent = `${result.reason}${result.targets.length ? `（${result.targets.length}候補）` : " 手札のカードから効果詳細を確認できます。"}`;
+    reason.textContent = result.targets.length ? `対象 ${result.targets.length}件` : result.reason;
     button.appendChild(reason);
     button.setAttribute("aria-label", `${actor.name}の${def.name}、${SPEED_LABEL[def.speed]}、${cardCategorySummary(def)}。${result.reason}。残り${3 - game.queue.length}命令`);
     button.addEventListener("click", () => {
@@ -1089,7 +967,7 @@ function renderActorPanel() {
     button.type = "button";
     button.id = "actor-alt";
     button.disabled = full || !move.targets.length;
-    button.innerHTML = `<strong>1マス移動（ALT）</strong><small>${move.reason}。消費するカードは次に選びます。</small>`;
+    button.innerHTML = `<strong>1マス移動（ALT）</strong><small>${move.targets.length ? "使うカードを次に選択" : move.reason}</small>`;
     button.setAttribute("aria-label", `${actor.name}を1マス移動、${move.reason}、残り${3 - game.queue.length}命令`);
     button.addEventListener("click", () => {
       actorChoice = "alt-pick";
@@ -1104,13 +982,16 @@ function handleCellClick(x, y) {
   const card = selectedCard();
   const def = selectedDef();
   if (game.phase !== "planning") return;
+  const clickedUnit = previewDisplayUnitAt(timelineDisplayContext().state, x, y);
   if (!card || !def) {
-    const unit = previewDisplayUnitAt(timelineDisplayContext().state, x, y);
-    if (unit?.side === "player") chooseActor(unit.id);
+    if (clickedUnit?.side === "player") chooseActor(clickedUnit.id, "board");
     return;
   }
   const valid = new Set(validCells().map(keyOf));
-  if (!valid.has(`${x},${y}`)) return;
+  if (!valid.has(`${x},${y}`)) {
+    if (clickedUnit?.side === "player") chooseActor(clickedUnit.id, "board");
+    return;
+  }
 
   const context = selectionTimelineContext();
   const selectionState = context?.state;
@@ -1256,8 +1137,7 @@ function cloneCombatState(source = game) {
   return {
     units: source.units.map(unit => ({ ...unit })),
     hostileRunes: source.hostileRunes.map(cell => ({ ...cell })),
-    emberRunes: source.emberRunes.map(cell => ({ ...cell })),
-    cancelledEventKeys: [...(source.cancelledEventKeys || [])]
+    emberRunes: source.emberRunes.map(cell => ({ ...cell }))
   };
 }
 
@@ -1322,45 +1202,15 @@ function simPathToAdjacent(state, mover, target, evidence = null) {
   return path;
 }
 
-function simConsumeWard(target, effectName, outcome) {
-  if (!target.ward) return false;
-  target.ward = false;
-  outcome.logs.push(`${target.name}の結界が「${effectName}」を無効化。`);
-  return true;
-}
-
 function simDealDamage(state, targetId, amount, sourceId, options, outcome) {
-  const originalTarget = simGetUnit(state, targetId);
+  const target = simGetUnit(state, targetId);
   const source = simGetUnit(state, sourceId);
-  if (!originalTarget || originalTarget.hp <= 0) return null;
-  if (options.hazard && simConsumeWard(originalTarget, "地形ダメージ", outcome)) return originalTarget;
-
-  let target = originalTarget;
-  if (source?.side === "player" && target.side === "enemy" && target.id !== "bastion") {
-    const bastion = simGetUnit(state, "bastion");
-    if (bastion?.hp > 0 && bastion.coveringId === target.id && isOrthogonallyAdjacent(bastion, target)) {
-      outcome.logs.push(`城壁兵が${target.name}への攻撃を肩代わり。`);
-      target = bastion;
-    }
-  }
-  if (source?.side === "enemy" && target.side === "player" && target.id !== "rook") {
-    const rook = simGetUnit(state, "rook");
-    if (rook?.hp > 0 && rook.coveringId === target.id && isOrthogonallyAdjacent(rook, target)) {
-      outcome.logs.push(`ルークが${target.name}への攻撃を肩代わり。`);
-      target = rook;
-    }
-  }
-
+  if (!target || target.hp <= 0) return null;
   let finalAmount = amount;
-  if (source?.side === "player" && target.marked && !options.ignoreMark) {
+  if (source?.side === "player" && target.side === "enemy" && target.marked) {
     finalAmount += 3;
     target.marked = false;
-    outcome.logs.push("狩人の印が発動。ダメージ+3。");
-  }
-  if (source?.side === "enemy" && target.exposed) {
-    finalAmount += 1;
-    target.exposed = false;
-    outcome.logs.push("露出を突かれ、ダメージ+1。");
+    outcome.logs.push(`${target.name}の目印を消費。ダメージ+3。`);
   }
 
   const absorbed = Math.min(target.guard, finalAmount);
@@ -1368,24 +1218,7 @@ function simDealDamage(state, targetId, amount, sourceId, options, outcome) {
   const hpDamage = finalAmount - absorbed;
   target.hp = Math.max(0, target.hp - hpDamage);
   outcome.logs.push(`${target.name}に${hpDamage}ダメージ${absorbed ? `（装甲が${absorbed}吸収）` : ""}。`);
-  if (target.hp <= 0) {
-    target.coveringId = null;
-    outcome.logs.push(`${target.name}が戦闘不能。`);
-  }
-
-  const canCounter = options.melee
-    && source?.side === "player"
-    && source.hp > 0
-    && target.id === "bastion"
-    && target.hp > 0
-    && target.counter > 0
-    && isOrthogonallyAdjacent(target, source);
-  if (canCounter) {
-    const counterDamage = target.counter;
-    target.counter = 0;
-    outcome.logs.push(`城壁兵の反撃。${source.name}へ${counterDamage}ダメージ。`);
-    simDealDamage(state, source.id, counterDamage, target.id, { hostile: true }, outcome);
-  }
+  if (target.hp <= 0) outcome.logs.push(`${target.name}が戦闘不能。`);
   return target;
 }
 
@@ -1399,13 +1232,12 @@ function simTriggerEmberRune(state, enemy, outcome) {
   return true;
 }
 
-function simHealWithCharge(unit, amount, outcome) {
+function simHeal(unit, amount, outcome) {
   if (!unit || unit.hp <= 0 || amount <= 0) return 0;
   const healed = Math.min(amount, unit.maxHp - unit.hp);
   if (healed <= 0) return 0;
   unit.hp += healed;
-  if (unit.side === "enemy") unit.charge = Math.min(2, (unit.charge || 0) + healed);
-  outcome?.logs.push(`${unit.name}が${healed}回復。帯電${unit.charge}。`);
+  outcome?.logs.push(`${unit.name}が${healed}回復。`);
   return healed;
 }
 
@@ -1478,17 +1310,9 @@ function resolveSimPlayer(state, event, context, outcome) {
 
   if (action.mode === "legacy") {
     const target = simGetUnit(state, action.targetId);
-    if (!target || target.hp <= 0) return cancelOutcome(outcome, "遺志の対象が戦闘不能");
-    if (def.ownerId === "rook") {
-      target.guard += 2;
-      outcome.logs.push(`ルークの遺志。${target.name}に装甲2。`);
-    } else if (def.ownerId === "vale") {
-      target.marked = true;
-      outcome.logs.push(`ヴェイルの遺志。${target.name}に狩人の印。`);
-    } else {
-      target.ward = true;
-      outcome.logs.push(`イオナの遺志。${target.name}に結界。`);
-    }
+    if (!target || target.hp <= 0 || target.side !== "player") return cancelOutcome(outcome, "遺志の対象が戦闘不能");
+    target.guard += 2;
+    outcome.logs.push(`遺志。${target.name}に装甲2。`);
     return outcome;
   }
 
@@ -1511,24 +1335,13 @@ function resolveSimPlayer(state, event, context, outcome) {
       return outcome;
     case "shield_lock": {
       actor.guard += 5;
-      const adjacent = simLiving(state, "player").filter(unit => unit.id !== actor.id && isOrthogonallyAdjacent(actor, unit));
-      actor.coveringId = adjacent[0]?.id || null;
-      outcome.logs.push(`${actor.name}に装甲5${actor.coveringId ? `。${simGetUnit(state, actor.coveringId).name}を庇う` : ""}。`);
+      outcome.logs.push(`${actor.name}に装甲5。`);
       return outcome;
     }
     case "pommel_break": {
       if (!target || target.hp <= 0) return cancelOutcome(outcome, "対象が戦闘不能");
       if (!isOrthogonallyAdjacent(actor, target)) return cancelOutcome(outcome, "対象が上下左右の隣接外");
       target.guard = 0;
-      target.counter = 0;
-      target.persistentGuard = false;
-      const channelEvent = context.events.slice(context.index + 1).find(item =>
-        item.kind === "enemy" && item.payload.actorId === target.id && item.payload.channel
-      );
-      if (channelEvent && !state.cancelledEventKeys.includes(channelEvent.key)) {
-        state.cancelledEventKeys.push(channelEvent.key);
-        outcome.logs.push(`${target.name}の「${channelEvent.payload.name}」を詠唱解除。`);
-      }
       simDealDamage(state, target.id, 2, actor.id, { melee: true }, outcome);
       return outcome;
     }
@@ -1564,15 +1377,8 @@ function resolveSimPlayer(state, event, context, outcome) {
       if (!target || target.hp <= 0) return cancelOutcome(outcome, "対象が戦闘不能");
       if (distance(actor, target) > 3) return cancelOutcome(outcome, "対象が射程外");
       const chained = simLiving(state, "enemy").filter(unit => unit.id !== target.id && isOrthogonallyAdjacent(unit, target));
-      const charge = Math.min(2, target.charge || 0);
       simDealDamage(state, target.id, 3, actor.id, {}, outcome);
-      for (const other of chained) simDealDamage(state, other.id, 2 + charge, actor.id, { ignoreMark: true }, outcome);
-      if (chained.length) {
-        target.charge = 0;
-        outcome.logs.push(`${target.name}の帯電${charge}を連鎖に消費。`);
-      } else {
-        outcome.logs.push("連鎖先なし（帯電ボーナスなし）");
-      }
+      for (const other of chained) simDealDamage(state, other.id, 2, actor.id, {}, outcome);
       return outcome;
     }
     case "phase_step": {
@@ -1584,13 +1390,15 @@ function resolveSimPlayer(state, event, context, outcome) {
       return outcome;
     }
     case "null_sigil":
-      if (!target || target.hp <= 0 || target.side !== "player") return cancelOutcome(outcome, "結界対象がいない");
-      if (distance(actor, target) > 3) return cancelOutcome(outcome, "結界対象が射程外");
-      target.ward = true;
+      if (!target || target.hp <= 0 || target.side !== "player") return cancelOutcome(outcome, "装甲対象がいない");
+      if (distance(actor, target) > 3) return cancelOutcome(outcome, "装甲対象が射程外");
+      target.guard += 3;
+      outcome.logs.push(`${target.name}に装甲3。`);
       return outcome;
     case "ember_rune":
       if (!action.target || !simIsEmpty(state, action.target.x, action.target.y)) return cancelOutcome(outcome, "罠の設置先が占有されている");
       if (distance(actor, action.target) > 3) return cancelOutcome(outcome, "罠の設置先が射程外");
+      state.emberRunes = state.emberRunes.filter(cell => keyOf(cell) !== keyOf(action.target));
       state.emberRunes.push({ ...action.target });
       return outcome;
     default:
@@ -1601,18 +1409,9 @@ function resolveSimPlayer(state, event, context, outcome) {
 function resolveSimEnemy(state, event, outcome, collectMovement = false) {
   const enemyIntent = event.payload;
   const actor = simGetUnit(state, enemyIntent.actorId);
-  if (!actor || actor.hp <= 0) return cancelOutcome(outcome, "行動者が戦闘不能");
-
-  if (state.cancelledEventKeys.includes(event.key)) {
+  if (!actor || actor.hp <= 0) {
     if (enemyIntent.id === "detonate") state.hostileRunes = [];
-    return cancelOutcome(outcome, "柄打ちで詠唱解除");
-  }
-
-  if (actor.id === "bastion" && actor.persistentGuard && enemyIntent.id !== "brace") {
-    actor.guard = 0;
-    actor.counter = 0;
-    actor.persistentGuard = false;
-    outcome.logs.push("城壁兵の反撃姿勢が終了。");
+    return cancelOutcome(outcome, "行動者が戦闘不能");
   }
 
   const target = enemyIntent.targetId ? simGetUnit(state, enemyIntent.targetId) : null;
@@ -1640,18 +1439,18 @@ function resolveSimEnemy(state, event, outcome, collectMovement = false) {
     }
     case "recover": {
       if (!target || target.hp <= 0) return cancelOutcome(outcome, "対象が戦闘不能");
-      const evidence = startMovementEvidence(outcome, event, actor, target, 1, "start", collectMovement);
-      if (movementAttackCondition(evidence, "adjacent", isOrthogonallyAdjacent(actor, target))) {
+      const evidence = startMovementEvidence(outcome, event, actor, target, 1, "after_move", collectMovement);
+      simMoveToward(state, actor, target, 1, outcome, evidence);
+      if (movementAttackCondition(evidence, "actorAlive", actor.hp > 0) && movementAttackCondition(evidence, "adjacent", isOrthogonallyAdjacent(actor, target))) {
         if (evidence) evidence.attack.performed = true;
         simDealDamage(state, target.id, 2, actor.id, { hostile: true, melee: true }, outcome);
       }
-      else simMoveToward(state, actor, target, 1, outcome, evidence);
       return outcome;
     }
     case "cover":
-      if (!target || target.hp <= 0) return cancelOutcome(outcome, "庇護対象が戦闘不能");
+      if (!target || target.hp <= 0) return cancelOutcome(outcome, "装甲対象が戦闘不能");
       target.guard += 4;
-      actor.coveringId = isOrthogonallyAdjacent(actor, target) ? target.id : null;
+      outcome.logs.push(`${target.name}に装甲4。`);
       return outcome;
     case "shield_drive": {
       if (!target || target.hp <= 0) return cancelOutcome(outcome, "対象が戦闘不能");
@@ -1660,14 +1459,12 @@ function resolveSimEnemy(state, event, outcome, collectMovement = false) {
       if (movementAttackCondition(evidence, "actorAlive", actor.hp > 0) && movementAttackCondition(evidence, "targetAlive", target.hp > 0) && movementAttackCondition(evidence, "adjacent", isOrthogonallyAdjacent(actor, target))) {
         if (evidence) evidence.attack.performed = true;
         simDealDamage(state, target.id, 3, actor.id, { hostile: true, melee: true }, outcome);
-        if (target.hp > 0 && !simConsumeWard(target, "露出", outcome)) target.exposed = true;
       }
       return outcome;
     }
     case "brace":
       actor.guard += 6;
-      actor.counter = 4;
-      actor.persistentGuard = true;
+      outcome.logs.push(`${actor.name}に装甲6。`);
       return outcome;
     case "inscribe":
       state.hostileRunes = enemyIntent.cells.map(cell => ({ x: cell.x, y: cell.y }));
@@ -1683,8 +1480,7 @@ function resolveSimEnemy(state, event, outcome, collectMovement = false) {
     case "drain": {
       if (!target || target.hp <= 0) return cancelOutcome(outcome, "対象が戦闘不能");
       simDealDamage(state, target.id, 2, actor.id, { hostile: true }, outcome);
-      const injured = simLiving(state, "enemy").filter(unit => unit.hp < unit.maxHp).sort((a, b) => a.hp - b.hp)[0];
-      if (injured) simHealWithCharge(injured, 2, outcome);
+      simHeal(actor, 2, outcome);
       return outcome;
     }
     default:
@@ -1707,162 +1503,33 @@ function changedTerrain(beforeCells, afterCells) {
 
 function buildStructuredChanges(before, after, outcome, event) {
   const groups = [];
-  const unitChanges = after.units.map(unit => ({ unit, old: before.units.find(item => item.id === unit.id) })).filter(item => item.old);
-  const damaged = unitChanges.filter(({ unit, old }) => unit.hp < old.hp);
-  const healed = unitChanges.filter(({ unit, old }) => unit.hp > old.hp);
-  const moved = unitChanges.filter(({ unit, old }) => unit.x !== old.x || unit.y !== old.y);
-  const guard = unitChanges.filter(({ unit, old }) => unit.guard !== old.guard || unit.persistentGuard !== old.persistentGuard);
-  const charged = unitChanges.filter(({ unit, old }) => (unit.charge || 0) !== (old.charge || 0));
-  const statusDefs = [
-    ["ward", "結界"], ["marked", "標的"], ["rooted", "移動不能"], ["exposed", "露出"]
-  ];
-  const statusDetails = [];
-  const statusCounts = new Map();
-
-  if (outcome.status === "cancelled") {
-    groups.push({
-      type: "cancel", priority: 100,
-      summary: `取消：${outcome.reason}`,
-      details: [`${event.kind === "enemy" ? "敵行動" : "味方命令"}を取消：${outcome.reason}`]
-    });
-  }
-
+  const changes = after.units.map(unit => ({ unit, old: before.units.find(item => item.id === unit.id) }));
+  const damaged = changes.filter(({ unit, old }) => unit.hp < old.hp);
+  const healed = changes.filter(({ unit, old }) => unit.hp > old.hp);
+  const moved = changes.filter(({ unit, old }) => unit.x !== old.x || unit.y !== old.y);
+  const armored = changes.filter(({ unit, old }) => unit.guard !== old.guard);
+  const add = (type, priority, summary, details) => groups.push({ type, priority, summary, details });
+  if (outcome.status === "cancelled") add("cancel", 100, `取消：${outcome.reason}`, [`${event.kind === "enemy" ? "敵行動" : "味方命令"}を取消：${outcome.reason}`]);
   if (damaged.length) {
     const total = damaged.reduce((sum, { unit, old }) => sum + old.hp - unit.hp, 0);
     const ko = damaged.filter(({ unit, old }) => old.hp > 0 && unit.hp <= 0).length;
-    groups.push({
-      type: "damage", priority: ko ? 90 : 80,
-      summary: damaged.length === 1
-        ? `${damaged[0].unit.name}に${damaged[0].old.hp - damaged[0].unit.hp}ダメージ${ko ? "・撃破" : ""}`
-        : `${damaged.length}人に計${total}ダメージ${ko ? `（${ko}人撃破）` : ""}`,
-      details: damaged.map(({ unit, old }) => `${unit.name} HP ${old.hp}→${unit.hp}${old.hp > 0 && unit.hp <= 0 ? "（撃破）" : ""}`)
-    });
+    add("damage", ko ? 90 : 80,
+      damaged.length === 1 ? `${damaged[0].unit.name}に${total}ダメージ${ko ? "・撃破" : ""}` : `${damaged.length}人に計${total}ダメージ${ko ? `（${ko}人撃破）` : ""}`,
+      damaged.map(({ unit, old }) => `${unit.name} HP ${old.hp}→${unit.hp}${unit.hp <= 0 ? "（撃破）" : ""}`));
   }
-
-  if (healed.length) {
-    const total = healed.reduce((sum, { unit, old }) => sum + unit.hp - old.hp, 0);
-    groups.push({
-      type: "heal", priority: 80,
-      summary: healed.length === 1 ? `${healed[0].unit.name}が${healed[0].unit.hp - healed[0].old.hp}回復` : `${healed.length}人が計${total}回復`,
-      details: healed.map(({ unit, old }) => `${unit.name} HP ${old.hp}→${unit.hp}`)
-    });
+  if (healed.length) add("heal", 80, healed.length === 1 ? `${healed[0].unit.name}が${healed[0].unit.hp - healed[0].old.hp}回復` : `${healed.length}人が回復`, healed.map(({ unit, old }) => `${unit.name} HP ${old.hp}→${unit.hp}`));
+  if (moved.length) add("move", 70, moved.length === 1 ? `${moved[0].unit.name} ${cellLabel(moved[0].old)}→${cellLabel(moved[0].unit)}` : `${moved.length}人が位置変更`, moved.map(({ unit, old }) => `${unit.name} ${cellLabel(old)}→${cellLabel(unit)}`));
+  if (armored.length) add("guard", 60, armored.length === 1 ? `${armored[0].unit.name} 装甲${armored[0].old.guard}→${armored[0].unit.guard}` : `${armored.length}人の装甲変化`, armored.map(({ unit, old }) => `${unit.name} 装甲 ${old.guard}→${unit.guard}`));
+  const statuses = [];
+  for (const { unit, old } of changes) for (const [key, label] of [["rooted", "足止め"], ["marked", "目印"]]) {
+    if (unit[key] !== old[key]) statuses.push(`${unit.name}：${label}${unit[key] ? "付与" : "解除"}`);
   }
-
-  if (moved.length) {
-    groups.push({
-      type: "move", priority: 70,
-      summary: moved.length === 1 ? `${moved[0].unit.name} ${cellLabel(moved[0].old)}→${cellLabel(moved[0].unit)}` : `${moved.length}人が位置変更`,
-      details: moved.map(({ unit, old }) => `${unit.name} ${cellLabel(old)}→${cellLabel(unit)}`)
-    });
-  }
-
-  if (guard.length) {
-    groups.push({
-      type: "guard", priority: 60,
-      summary: guard.length === 1 ? `${guard[0].unit.name} 装甲${guard[0].old.guard}→${guard[0].unit.guard}` : `${guard.length}人の装甲変化`,
-      details: guard.map(({ unit, old }) => `${unit.name} 装甲 ${old.guard}→${unit.guard}${unit.persistentGuard ? "（持続）" : ""}`)
-    });
-  }
-
-  for (const { unit, old } of unitChanges) {
-    for (const [property, label] of statusDefs) {
-      if (unit[property] === old[property]) continue;
-      const operation = unit[property] ? "付与" : "解除";
-      statusDetails.push(`${unit.name}：${label}${operation}`);
-      const countKey = `${label}${unit[property] ? "+" : "-"}`;
-      statusCounts.set(countKey, (statusCounts.get(countKey) || 0) + 1);
-    }
-  }
-  if (statusDetails.length) {
-    groups.push({
-      type: "status", priority: 60,
-      summary: [...statusCounts.entries()].map(([label, count]) => `${label}${count}`).join(" / "),
-      details: statusDetails
-    });
-  }
-
-  if (charged.length) {
-    groups.push({
-      type: "charge", priority: 75,
-      summary: charged.length === 1
-        ? `${charged[0].unit.name} 帯電${charged[0].old.charge || 0}→${charged[0].unit.charge || 0}`
-        : `${charged.length}人の帯電変化`,
-      details: charged.map(({ unit, old }) => `${unit.name} 帯電 ${old.charge || 0}→${unit.charge || 0}`)
-    });
-  }
-
-  if (outcome.logs?.includes("連鎖先なし（帯電ボーナスなし）")) {
-    groups.push({
-      type: "chain", priority: 75,
-      summary: "連鎖先なし（帯電ボーナスなし）",
-      details: ["上下左右に生存敵がいないため、帯電を消費しない"]
-    });
-  }
-
-  if (outcome.logs?.includes("火種の罠で残り移動停止")) {
-    groups.push({
-      type: "move_stop", priority: 85,
-      summary: "火種の罠で残り移動停止",
-      details: ["火種の罠を踏んだため、この移動イベントの残り歩数を失った"]
-    });
-  }
-
-  for (const { unit, old } of unitChanges) {
-    if (unit.coveringId === old.coveringId) continue;
-    if (old.coveringId) {
-      const oldTarget = before.units.find(item => item.id === old.coveringId);
-      groups.push({ type: "cover_end", priority: 60, summary: `${unit.name}の庇護終了`, details: [`${unit.name} → ${oldTarget?.name || old.coveringId} の庇護を終了`] });
-    }
-    if (unit.coveringId) {
-      const newTarget = after.units.find(item => item.id === unit.coveringId);
-      groups.push({ type: "cover_start", priority: 60, summary: `${unit.name}が${newTarget?.name || unit.coveringId}を庇護`, details: [`${unit.name} → ${newTarget?.name || unit.coveringId} を庇護`] });
-    }
-  }
-
-  for (const { unit, old } of unitChanges) {
-    if (unit.counter === old.counter) continue;
-    const ready = unit.counter > old.counter;
-    const fired = outcome.logs?.some(log => log.startsWith(`${unit.name}の反撃。`));
-    const cleared = event.kind === "player" && event.payload.mode === "technique"
-      && event.payload.cardId === "pommel_break" && event.payload.targetId === unit.id;
-    const ended = outcome.logs?.includes(`${unit.name}の反撃姿勢が終了。`);
-    const reason = fired ? "反撃が発動" : cleared ? "柄打ちで反撃準備を解除" : ended ? "次の行動で反撃準備が終了" : "反撃準備が終了";
-    groups.push({
-      type: ready ? "counter_ready" : fired ? "counter_fired" : cleared ? "counter_cleared" : "counter_end", priority: 60,
-      summary: ready ? `${unit.name} 反撃${unit.counter}を準備` : `${unit.name}：${reason}`,
-      details: [`${unit.name} 反撃 ${old.counter}→${unit.counter}`]
-    });
-  }
-
-  const terrain = [
-    ["火種の罠", changedTerrain(before.emberRunes, after.emberRunes)],
-    ["災印", changedTerrain(before.hostileRunes, after.hostileRunes)]
-  ];
-  for (const [label, change] of terrain) {
-    if (change.added.length) {
-      groups.push({
-        type: "zone_add", priority: 50,
-        summary: `${label}を${change.added.length === 1 ? cellLabel(change.added[0]) : `${change.added.length}マス`}に設置`,
-        details: [`${label}を ${change.added.map(cellLabel).join(" / ")} に設置`]
-      });
-    }
-    if (change.removed.length) {
-      groups.push({
-        type: "zone_remove", priority: 50,
-        summary: `${label}${change.removed.length}マス消滅`,
-        details: [`${label} ${change.removed.map(cellLabel).join(" / ")} が消滅`]
-      });
-    }
-  }
-
-  const runeCells = new Map([...before.emberRunes, ...after.emberRunes].map(cell => [keyOf(cell), cell]));
-  for (const [key, cell] of runeCells) {
-    const oldCount = before.emberRunes.filter(item => keyOf(item) === key).length;
-    const newCount = after.emberRunes.filter(item => keyOf(item) === key).length;
-    if (oldCount === newCount || !oldCount || !newCount) continue;
-    groups.push({ type: "zone_count", priority: 50,
-      summary: `火種の罠 ${cellLabel(cell)} 設置数${oldCount}→${newCount}`,
-      details: [`同じマスの罠は1回の進入で1個だけ発動。残り${newCount}個`] });
+  if (statuses.length) add("status", 60, statuses.join(" / "), statuses);
+  if (outcome.logs.includes("火種の罠で残り移動停止")) add("move_stop", 85, "火種の罠で残り移動停止", ["罠を踏み、この移動の残り歩数を失った"]);
+  for (const [label, previous, current] of [["火種の罠", before.emberRunes, after.emberRunes], ["災印", before.hostileRunes, after.hostileRunes]]) {
+    const change = changedTerrain(previous, current);
+    if (change.added.length) add("zone_add", 50, `${label}を${change.added.length === 1 ? cellLabel(change.added[0]) : `${change.added.length}マス`}に設置`, [`${label} ${change.added.map(cellLabel).join(" / ")} に設置`]);
+    if (change.removed.length) add("zone_remove", 50, `${label}${change.removed.length}マス消滅`, [`${label} ${change.removed.map(cellLabel).join(" / ")} が消滅`]);
   }
   return groups.sort((a, b) => b.priority - a.priority);
 }
@@ -1880,7 +1547,10 @@ function predictTimeline(events = buildResolutionEvents(), eventLimit = events.l
     const event = events[index];
     const before = cloneCombatState(state);
     const outcome = { status: "resolved", reason: "", logs: [] };
-    if (simBattleResult(state)) cancelOutcome(outcome, "戦闘終了");
+    if (simBattleResult(state)) {
+      if (event.kind === "enemy" && event.payload.id === "detonate") state.hostileRunes = [];
+      cancelOutcome(outcome, "戦闘終了");
+    }
     else if (event.kind === "player") resolveSimPlayer(state, event, { events, index }, outcome);
     else resolveSimEnemy(state, event, outcome, collectMovement);
     outcome.groups = buildStructuredChanges(before, state, outcome, event);
@@ -1964,7 +1634,7 @@ function unresolvedIntentCells(context) {
   return context.events.flatMap((event, index) => {
     if (index <= context.afterIndex || event.kind !== "enemy" || !event.payload.cells?.length) return [];
     const actor = simGetUnit(context.state, event.payload.actorId);
-    if (!actor || actor.hp <= 0 || context.state.cancelledEventKeys.includes(event.key)) return [];
+    if (!actor || actor.hp <= 0) return [];
     const knownOutcome = forecastOutcomeByKey(baseForecast, event.key);
     if (knownOutcome?.status === "cancelled") return [];
     return event.payload.cells;
@@ -2022,380 +1692,27 @@ async function executeTurn() {
   render();
 }
 
+// The same pure event resolver drives the timeline and any direct execution call.
+function resolveStandaloneEvent(event) {
+  const state = cloneCombatState(game);
+  const outcome = { status: "resolved", reason: "", logs: [] };
+  if (simBattleResult(state)) {
+    if (event.kind === "enemy" && event.payload.id === "detonate") state.hostileRunes = [];
+    cancelOutcome(outcome, "戦闘終了");
+  } else if (event.kind === "player") resolveSimPlayer(state, event, { events: [event], index: 0 }, outcome);
+  else resolveSimEnemy(state, event, outcome, true);
+  applyCombatState(state);
+  for (const message of outcome.logs) addLog(message, outcome.status === "cancelled");
+  render();
+  return outcome;
+}
+
 async function resolvePlayerAction(action) {
-  const def = cardDefs[action.cardId];
-  const actor = getUnit(action.actorId);
-
-  if (action.mode === "move") {
-    if (!actor || actor.hp <= 0 || !isOrthogonallyAdjacent(actor, action.target) || !isEmpty(action.target.x, action.target.y)) {
-      addLog(`${action.label}は実行できなかった。`);
-      return;
-    }
-    actor.x = action.target.x;
-    actor.y = action.target.y;
-    addLog(`${actor.name}が1マス移動。`);
-    render();
-    return;
-  }
-
-  if (action.mode === "legacy") {
-    const target = getUnit(action.targetId);
-    if (!target || target.hp <= 0) {
-      addLog("遺志の対象がいない。命令は失われた。");
-      return;
-    }
-    if (def.ownerId === "rook") {
-      target.guard += 2;
-      addLog(`ルークの遺志。${target.name}に装甲2。`, true);
-    } else if (def.ownerId === "vale") {
-      target.marked = true;
-      addLog(`ヴェイルの遺志。${target.name}に狩人の印。`, true);
-    } else {
-      target.ward = true;
-      addLog(`イオナの遺志。${target.name}に結界。`, true);
-    }
-    render();
-    return;
-  }
-
-  if (!actor || actor.hp <= 0) {
-    addLog(`${ownerMeta[def.ownerId].name}は倒れている。${def.name}は不発。`);
-    return;
-  }
-  const target = action.targetId ? getUnit(action.targetId) : null;
-  addLog(`${actor.name}の「${def.name}」。`, true);
-
-  switch (action.cardId) {
-    case "forward_cut": {
-      if (!target || target.hp <= 0) return fizzle("対象がいない。");
-      if (distance(actor, target) === 2) await moveToward(actor, target, 1);
-      if (isOrthogonallyAdjacent(actor, target)) await dealDamage(target, 3, actor, { melee: true });
-      else fizzle("敵へ届かなかった。");
-      break;
-    }
-    case "interpose": {
-      if (!target || target.hp <= 0) return fizzle("守る味方がいない。");
-      await moveToward(actor, target, 2);
-      actor.guard += 2;
-      target.guard += 2;
-      addLog(`${actor.name}と${target.name}に装甲2。`);
-      render();
-      break;
-    }
-    case "shield_lock": {
-      actor.guard += 5;
-      const adjacentAllies = living("player").filter(unit => unit.id !== actor.id && isOrthogonallyAdjacent(actor, unit));
-      actor.coveringId = adjacentAllies[0]?.id || null;
-      addLog(`${actor.name}に装甲5${actor.coveringId ? `。${getUnit(actor.coveringId).name}を庇う` : ""}。`);
-      render();
-      break;
-    }
-    case "pommel_break": {
-      if (!target || target.hp <= 0 || !isOrthogonallyAdjacent(actor, target)) return fizzle("敵が上下左右に隣接していない。");
-      target.guard = 0;
-      target.counter = 0;
-      target.persistentGuard = false;
-      target.channelCancelled = game.intents.some(item => item.actorId === target.id && item.channel);
-      await dealDamage(target, 2, actor, { melee: true });
-      addLog(`${target.name}の装甲${target.channelCancelled ? "と、このターンの詠唱" : ""}を解除。`);
-      break;
-    }
-    case "quickshot": {
-      if (!validRangedTarget(actor, target, 3)) return fizzle("射程外になった。");
-      await dealDamage(target, 2, actor);
-      break;
-    }
-    case "pinning_arrow": {
-      if (!validRangedTarget(actor, target, 4)) return fizzle("射程外になった。");
-      await dealDamage(target, 1, actor);
-      if (target.hp > 0) {
-        target.rooted = true;
-        addLog(`${target.name}の移動を封じた。`);
-      }
-      render();
-      break;
-    }
-    case "backstep_shot": {
-      if (!validRangedTarget(actor, target, 3)) return fizzle("射程外になった。");
-      await dealDamage(target, 2, actor);
-      const options = neighbors(actor).filter(cell => isEmpty(cell.x, cell.y))
-        .sort((a, b) => distance(b, target) - distance(a, target));
-      if (options[0]) {
-        actor.x = options[0].x;
-        actor.y = options[0].y;
-        addLog(`${actor.name}が間合いを取る。`);
-        render();
-      }
-      break;
-    }
-    case "hunters_mark": {
-      if (!validRangedTarget(actor, target, 4)) return fizzle("射程外になった。");
-      target.marked = true;
-      addLog(`${target.name}に狩人の印。次の攻撃+3。`);
-      render();
-      break;
-    }
-    case "arc_spark": {
-      if (!validRangedTarget(actor, target, 3)) return fizzle("射程外になった。");
-      const chained = living("enemy").filter(unit => unit.id !== target.id && isOrthogonallyAdjacent(unit, target));
-      const charge = Math.min(2, target.charge || 0);
-      await dealDamage(target, 3, actor);
-      for (const other of chained) await dealDamage(other, 2 + charge, actor, { ignoreMark: true });
-      if (chained.length) {
-        target.charge = 0;
-        addLog(`${target.name}の帯電${charge}を連鎖に消費。`);
-      } else {
-        addLog("連鎖先なし（帯電ボーナスなし）");
-      }
-      break;
-    }
-    case "phase_step": {
-      if (!target || target.hp <= 0 || target.side !== "player" || distance(actor, target) > 3) return fizzle("交換対象がいない。");
-      const old = { x: actor.x, y: actor.y };
-      actor.x = target.x; actor.y = target.y;
-      target.x = old.x; target.y = old.y;
-      addLog(`${actor.name}と${target.name}が位置交換。`);
-      render();
-      break;
-    }
-    case "null_sigil": {
-      if (!target || target.hp <= 0 || target.side !== "player" || distance(actor, target) > 3) return fizzle("結界対象がいない。");
-      target.ward = true;
-      addLog(`${target.name}に結界。`);
-      render();
-      break;
-    }
-    case "ember_rune": {
-      if (!isEmpty(action.target.x, action.target.y) || distance(actor, action.target) > 3) return fizzle("罠を置けない。");
-      game.emberRunes.push({ ...action.target });
-      addLog("火種の罠を設置。敵が踏めば3ダメージ。 ");
-      render();
-      break;
-    }
-    default:
-      break;
-  }
-}
-
-function validRangedTarget(actor, target, range) {
-  return target && target.hp > 0 && target.side === "enemy" && distance(actor, target) <= range;
-}
-
-function fizzle(message) {
-  addLog(message);
+  return resolveStandaloneEvent({ kind: "player", key: `player-${action.instance.instanceId}`, speed: action.speed, payload: action });
 }
 
 async function resolveEnemyIntent(enemyIntent) {
-  const actor = getUnit(enemyIntent.actorId);
-  if (!actor || actor.hp <= 0) return;
-  if (actor.id === "bastion" && actor.persistentGuard && enemyIntent.id !== "brace") {
-    actor.guard = 0;
-    actor.counter = 0;
-    actor.persistentGuard = false;
-  }
-  const target = enemyIntent.targetId ? getUnit(enemyIntent.targetId) : null;
-  addLog(`${actor.name}の「${enemyIntent.name}」。`, true);
-
-  switch (enemyIntent.id) {
-    case "stalk":
-      if (!target || target.hp <= 0) return;
-      await moveToward(actor, target, 2);
-      if (actor.hp > 0 && isOrthogonallyAdjacent(actor, target)) await dealDamage(target, 2, actor, { hostile: true, melee: true });
-      break;
-    case "pounce":
-      if (!target || target.hp <= 0) return;
-      await moveToward(actor, target, 3);
-      if (actor.hp > 0 && isOrthogonallyAdjacent(actor, target)) await dealDamage(target, 4, actor, { hostile: true, melee: true });
-      else addLog("追跡獣の飛びかかりは届かなかった。", true);
-      break;
-    case "recover":
-      if (!target || target.hp <= 0) return;
-      if (isOrthogonallyAdjacent(actor, target)) await dealDamage(target, 2, actor, { hostile: true, melee: true });
-      else await moveToward(actor, target, 1);
-      break;
-    case "cover": {
-      if (!target || target.hp <= 0) return;
-      target.guard += 4;
-      actor.coveringId = isOrthogonallyAdjacent(actor, target) ? target.id : null;
-      addLog(`${target.name}に装甲4${actor.coveringId ? "。城壁兵が肩代わり" : ""}。`);
-      render();
-      break;
-    }
-    case "shield_drive":
-      if (!target || target.hp <= 0) return;
-      await moveToward(actor, target, 1);
-      if (actor.hp > 0 && target.hp > 0 && isOrthogonallyAdjacent(actor, target)) {
-        await dealDamage(target, 3, actor, { hostile: true, melee: true });
-        if (target.hp > 0 && !consumeWard(target, "露出")) {
-          target.exposed = true;
-          addLog(`${target.name}は露出。次の敵攻撃+1。`);
-        }
-      }
-      break;
-    case "brace":
-      actor.guard += 6;
-      actor.counter = 4;
-      actor.persistentGuard = true;
-      addLog(`${actor.name}に装甲6。隣接攻撃へ反撃を構える。`);
-      render();
-      break;
-    case "inscribe":
-      game.hostileRunes = enemyIntent.cells.map(cell => ({ x: cell.x, y: cell.y }));
-      addLog(`${target?.name || "味方"}の周囲に災印が刻まれた。次ターンに起爆。`, true);
-      render();
-      break;
-    case "detonate": {
-      if (actor.channelCancelled) {
-        addLog("詠唱が崩れ、災印は起爆しなかった。", true);
-        actor.channelCancelled = false;
-        game.hostileRunes = [];
-        render();
-        return;
-      }
-      const victims = living("player").filter(unit => game.hostileRunes.some(cell => cell.x === unit.x && cell.y === unit.y));
-      if (!victims.length) addLog("災印は空のマスで爆発した。", true);
-      for (const victim of victims) await dealDamage(victim, 4, actor, { hostile: true, hazard: true });
-      game.hostileRunes = [];
-      render();
-      break;
-    }
-    case "drain": {
-      if (!target || target.hp <= 0) return;
-      await dealDamage(target, 2, actor, { hostile: true });
-      const injured = living("enemy").filter(unit => unit.hp < unit.maxHp).sort((a, b) => a.hp - b.hp)[0];
-      if (injured) {
-        const healed = Math.min(2, injured.maxHp - injured.hp);
-        injured.hp += healed;
-        injured.charge = Math.min(2, (injured.charge || 0) + healed);
-        addLog(`${injured.name}が${healed}回復。帯電${injured.charge}。`);
-        render();
-      }
-      break;
-    }
-    default:
-      break;
-  }
-}
-
-function findPathToAdjacent(mover, target) {
-  const startKey = `${mover.x},${mover.y}`;
-  const queue = [{ x: mover.x, y: mover.y }];
-  const cameFrom = new Map([[startKey, null]]);
-  let end = null;
-
-  while (queue.length) {
-    const current = queue.shift();
-    if (isOrthogonallyAdjacent(current, target)) {
-      end = current;
-      break;
-    }
-    for (const next of neighbors(current)) {
-      const nextKey = keyOf(next);
-      if (cameFrom.has(nextKey) || isWall(next.x, next.y)) continue;
-      const occupant = unitAt(next.x, next.y);
-      if (occupant && occupant.id !== mover.id) continue;
-      cameFrom.set(nextKey, current);
-      queue.push(next);
-    }
-  }
-
-  if (!end) return [];
-  const path = [];
-  let current = end;
-  while (current && keyOf(current) !== startKey) {
-    path.unshift(current);
-    current = cameFrom.get(keyOf(current));
-  }
-  return path;
-}
-
-async function moveToward(mover, target, steps) {
-  if (mover.rooted) {
-    addLog(`${mover.name}は縫い留められ、移動できない。`, true);
-    return;
-  }
-  const path = findPathToAdjacent(mover, target).slice(0, steps);
-  for (const cell of path) {
-    if (mover.hp <= 0) break;
-    mover.x = cell.x;
-    mover.y = cell.y;
-    render();
-    await pause(150);
-    if (mover.side === "enemy" && await triggerEmberRune(mover)) break;
-  }
-}
-
-async function triggerEmberRune(enemy) {
-  const index = game.emberRunes.findIndex(cell => cell.x === enemy.x && cell.y === enemy.y);
-  if (index < 0) return false;
-  game.emberRunes.splice(index, 1);
-  addLog(`${enemy.name}が火種の罠を踏んだ。`, true);
-  await dealDamage(enemy, 3, getUnit("iona"));
-  addLog("火種の罠で残り移動停止", true);
-  return true;
-}
-
-function consumeWard(target, effectName) {
-  if (!target.ward) return false;
-  target.ward = false;
-  addLog(`${target.name}の結界が「${effectName}」を無効化。`, true);
-  render();
-  return true;
-}
-
-async function dealDamage(originalTarget, amount, source, options = {}) {
-  if (!originalTarget || originalTarget.hp <= 0) return;
-  if (options.hazard && consumeWard(originalTarget, "地形ダメージ")) return;
-
-  let target = originalTarget;
-  if (source?.side === "player" && target.side === "enemy" && target.id !== "bastion") {
-    const bastion = getUnit("bastion");
-    if (bastion?.hp > 0 && bastion.coveringId === target.id && isOrthogonallyAdjacent(bastion, target)) {
-      addLog(`城壁兵が${target.name}への攻撃を肩代わり。`, true);
-      target = bastion;
-    }
-  }
-  if (source?.side === "enemy" && target.side === "player" && target.id !== "rook") {
-    const rook = getUnit("rook");
-    if (rook?.hp > 0 && rook.coveringId === target.id && isOrthogonallyAdjacent(rook, target)) {
-      addLog(`ルークが${target.name}への攻撃を肩代わり。`, true);
-      target = rook;
-    }
-  }
-
-  let finalAmount = amount;
-  if (source?.side === "player" && target.marked && !options.ignoreMark) {
-    finalAmount += 3;
-    target.marked = false;
-    addLog("狩人の印が発動。ダメージ+3。", true);
-  }
-  if (source?.side === "enemy" && target.exposed) {
-    finalAmount += 1;
-    target.exposed = false;
-    addLog("露出を突かれ、ダメージ+1。", true);
-  }
-
-  const absorbed = Math.min(target.guard, finalAmount);
-  target.guard -= absorbed;
-  const hpDamage = finalAmount - absorbed;
-  target.hp = Math.max(0, target.hp - hpDamage);
-  flash(target.id);
-  addLog(`${target.name}に${hpDamage}ダメージ${absorbed ? `（装甲が${absorbed}吸収）` : ""}。`, hpDamage >= 3);
-  render();
-  await pause(180);
-
-  if (target.hp <= 0) {
-    target.coveringId = null;
-    addLog(`${target.name}が戦闘不能。`, true);
-    render();
-  }
-
-  if (options.melee && source?.side === "player" && target.id === "bastion" && target.hp > 0 && target.counter > 0 && isOrthogonallyAdjacent(target, source)) {
-    const counterDamage = target.counter;
-    target.counter = 0;
-    addLog(`城壁兵の反撃。${source.name}へ${counterDamage}ダメージ。`, true);
-    await dealDamage(source, counterDamage, target, { hostile: true });
-  }
+  return resolveStandaloneEvent({ kind: "enemy", key: `enemy-${enemyIntent.actorId}-${enemyIntent.id}`, speed: enemyIntent.speed, payload: enemyIntent });
 }
 
 function flash(unitId) {
@@ -2416,12 +1733,11 @@ function endTurnCleanup() {
   game.hand = [];
   game.queue = [];
   for (const unit of game.units) {
-    if (!unit.persistentGuard) unit.guard = 0;
+    unit.guard = 0;
     unit.rooted = false;
-    unit.coveringId = null;
-    unit.channelCancelled = false;
-    unit.charge = 0;
+    unit.marked = false;
   }
+  game.emberRunes = [];
 }
 
 function battleResult() {
@@ -2442,7 +1758,7 @@ function finishBattle(result) {
   } else {
     showModal("部隊壊滅。", `
       <p>敵の予告に対し、移動・防御・妨害のどこへ命令を使うかが鍵です。</p>
-      <p>1ターン目に災印が置かれ、2ターン目に起爆します。「柄打ち」か「無効印」も試してください。</p>
+      <p>災印は設置の次ターンに起爆します。起爆マスから離れる、装甲で被害を抑える、起爆前に詠唱師を倒す方法を試してください。</p>
     `, "再戦する", "restart", "defeat");
   }
 }
@@ -2528,20 +1844,12 @@ function statusFullDescription(key, unit) {
 }
 
 function auxiliaryStatusDetails(unit) {
-  const details = [];
-  if (unit.hp <= 0) return details;
-  if (unit.coveringId) {
-    const target = timelineDisplayContext().state.units.find(item => item.id === unit.coveringId);
-    const active = target?.hp > 0 && isOrthogonallyAdjacent(unit, target);
-    details.push(`庇護：${unit.name}→${target?.name || unit.coveringId}。${active ? "隣接中・肩代わり有効" : "現在は肩代わりなし"}。${effectRules.damage.text}`);
-  }
-  if (unit.counter > 0) details.push(`反撃：威力${unit.counter}、残り1回、次の自分の行動開始まで。${effectRules.counter.text}`);
-  return details;
+  return [];
 }
 
 function statusAriaValue(key, unit, actual) {
   const meta = statusMeta[key];
-  if (key === "guard" || key === "charge") {
+  if (key === "guard") {
     const current = unit[key];
     const previous = actual?.[key] || 0;
     return actual && previous !== current
@@ -2613,8 +1921,8 @@ function restorePinnedStatusPopover() {
 }
 
 function enemyTraceFlow(id) {
-  return ({ stalk: "接近 → 攻撃", pounce: "接近 → 飛びかかり", recover: "開始時に隣接なら攻撃／離れていれば接近のみ",
-    cover: "庇護", shield_drive: "接近 → 盾撃", brace: "防御 → 反撃準備", inscribe: "災印設置",
+  return ({ stalk: "接近 → 攻撃", pounce: "接近 → 攻撃", recover: "接近 → 攻撃",
+    cover: "装甲+4", shield_drive: "接近 → 攻撃", brace: "装甲+6", inscribe: "災印設置",
     detonate: "災印起爆", drain: "攻撃 → 回復" })[id] || "行動";
 }
 
@@ -2639,13 +1947,13 @@ function renderEnemyTrace(trace) {
   const targetText = event.payload.targetKind === "cells" ? `マス ${announced.map(point).join(" / ") || "なし"}`
     : target ? `${target.name}${point(target)}` : timelineTargetLabel(event);
   const stopReason = evidence?.trap ? `火種の罠で停止 ${point(evidence.trap)}`
-    : evidence?.movementEnd === "rooted" ? "移動不能で停止"
+    : evidence?.movementEnd === "rooted" ? "足止めで停止"
     : evidence?.pathResult === "no_path" ? "経路なしで移動なし"
     : evidence?.pathResult === "already_adjacent" ? "開始時から隣接、移動なし"
     : "";
   const actionResult = outcome.status === "cancelled" ? `取消：${outcome.reason}` : outcome.summary;
   const attackText = evidence ? (evidence.attack.performed ? "攻撃あり" : "攻撃なし") : "";
-  const drainText = event.payload.id === "drain" ? "回復先は実行時の負傷状況で決定。" : "";
+  const drainText = event.payload.id === "drain" ? "詠唱師自身を最大2回復。" : "";
   el.enemyTrace.hidden = false;
   el.enemyTrace.innerHTML = `<div class="enemy-trace-heading"><strong>予告トレース｜${String(trace.index + 1).padStart(2, "0")} ${escapeEffectText(view.name)}「${escapeEffectText(view.action)}」</strong><button type="button" id="enemy-trace-close" aria-label="敵の予告トレースを閉じる">閉じる ×</button></div>
     <p>${escapeEffectText(SPEED_LABEL[event.speed])} · ${escapeEffectText(enemyTraceFlow(event.payload.id))}</p>
@@ -2748,8 +2056,15 @@ function renderBoard(interposeCandidates = []) {
         const projected = isPreview || hasMoved;
         const statuses = activeStatusEntries(unit);
         cell.setAttribute("aria-label", unitCellAriaLabel(unit, actual, projected, x, y, statuses));
-        if (game.phase === "planning" && !selectedCard() && unit.side === "player" && actual?.hp > 0) {
-          cell.setAttribute("aria-label", `${cell.getAttribute("aria-label")}。選ぶと${unit.name}の命令を表示。対象判定はこの命令の直前。`);
+        cell.dataset.unitId = unit.id;
+        const selectableAlly = game.phase === "planning" && unit.side === "player" && actual?.hp > 0;
+        if (selectableAlly && !valid.has(`${x},${y}`)) {
+          cell.classList.add("selectable-ally");
+          cell.setAttribute("aria-label", `${cell.getAttribute("aria-label")}。選ぶと${unit.name}の命令を表示。`);
+        }
+        if (selectableAlly && activeActorId === unit.id) {
+          cell.classList.add("selected-actor");
+          cell.setAttribute("aria-selected", "true");
         }
         const token = renderUnit(unit, projected, actual, statuses);
         cell.appendChild(token);
@@ -2786,11 +2101,10 @@ function previewDisplayUnitAt(state, x, y) {
 
 function renderUnit(unit, projected = false, actual = unit, statuses = activeStatusEntries(unit)) {
   const token = document.createElement("div");
-  const selected = game.moveUnitId === unit.id ? " selected-unit" : "";
+  const selected = game.moveUnitId === unit.id || activeActorId === unit.id ? " selected-unit" : "";
   const hit = game.flashUnitId === unit.id ? " hit" : "";
   const preview = projected ? " projected-unit" : "";
-  const ward = statuses.some(([key]) => key === "ward") ? " has-ward" : "";
-  token.className = `unit ${unit.side}${selected}${hit}${preview}${ward}`;
+  token.className = `unit ${unit.side}${selected}${hit}${preview}`;
   token.setAttribute("aria-hidden", "true");
   const hpChanged = actual && actual.hp !== unit.hp;
   const hpText = hpChanged ? `${actual.hp}→${unit.hp}` : `${unit.hp}/${unit.maxHp}`;
@@ -2808,9 +2122,8 @@ function renderUnit(unit, projected = false, actual = unit, statuses = activeSta
       const chip = document.createElement("span");
       chip.className = `status-chip ${key} shape-${meta.shape} tone-${meta.tone}${statusChanged(key, unit, actual) ? " changed" : ""}`;
       chip.dataset.status = key;
-      if (key === "guard" || key === "charge") {
-        const symbol = key === "guard" ? "盾" : "⚡";
-        chip.innerHTML = `<span class="status-symbol">${symbol}</span><b>${unit[key]}</b>`;
+      if (key === "guard") {
+        chip.innerHTML = `<span class="status-symbol">盾</span><b>${unit.guard}</b>`;
       } else {
         chip.textContent = meta.short(unit);
       }
@@ -2873,12 +2186,17 @@ function renderCardCategories(shown, moveMode) {
 
 function cardAriaLabel(def, shown, isLegacy, selected, moveMode) {
   const ownerName = ownerMeta[def.ownerId].name;
-  const legacyText = isLegacy ? "遺志。" : "";
-  const categoryText = cardCategorySummary(shown);
-  const modeText = moveMode
-    ? `移動命令として選択中。元の用途は${categoryText}。`
-    : selected ? `${isLegacy ? "遺志" : "技法"}として選択中。${categoryText}。` : `${categoryText}。`;
-  return `${ownerName}、${shown.name}。${legacyText}${modeText}${SPEED_LABEL[shown.speed]}。${shown.text} ALTで味方を1マス移動。`;
+  const modeText = moveMode ? "ALT移動として選択中。" : selected ? "技法として選択中。" : "";
+  return `${ownerName}、${shown.name}、${SPEED_LABEL[shown.speed]}。${cardTargetLabel(shown)}。${cardFaceEffect(shown)}${modeText} 詳細はカード選択後と遊び方で確認できます。`;
+}
+
+function cardTargetLabel(shown) {
+  const target = { enemy: "敵", ally: "生存味方", allyOther: "他の生存味方", self: "自身", empty: "空きマス" }[shown.target] || "対象";
+  return `${target}・${shown.range === undefined ? "距離無制限" : `射程${shown.range}`}`;
+}
+
+function cardFaceEffect(shown) {
+  return shown.text.replace(/^(敵|味方|他の味方|空きマス)・射程\d+。/, "");
 }
 
 function renderHand() {
@@ -2887,7 +2205,9 @@ function renderHand() {
     el.hand.innerHTML = `<p class="command-copy">命令実行中…</p>`;
     return;
   }
-  for (const instance of game.hand) {
+  const visibleHand = [...game.hand].sort((a, b) =>
+    Number(cardDefs[b.cardId].ownerId === activeActorId) - Number(cardDefs[a.cardId].ownerId === activeActorId));
+  for (const instance of visibleHand) {
     const def = cardDefs[instance.cardId];
     const owner = getUnit(def.ownerId);
     const isLegacy = !owner || owner.hp <= 0;
@@ -2901,13 +2221,12 @@ function renderHand() {
     button.disabled = game.phase !== "planning" || game.queue.length >= 3;
     button.setAttribute("aria-label", cardAriaLabel(def, shown, isLegacy, selected, moveMode));
     button.innerHTML = `
-      <span class="card-owner">${ownerMeta[def.ownerId].name} / ${ownerMeta[def.ownerId].role}</span>
-      ${renderCardCategories(shown, moveMode)}
+      <span class="card-owner">${ownerMeta[def.ownerId].name}</span>
       <h3>${shown.name}</h3>
-      <p>${shown.text}</p>
-      <span class="card-detail-hint">選択後、実行順の下で効果詳細 ▾</span>
+      <p class="card-target">${cardTargetLabel(shown)}</p>
+      <p>${cardFaceEffect(shown)}</p>
       <div class="card-bottom">
-        <span class="card-move${moveMode ? " active-use-mode" : ""}">${moveMode ? `${categoryIconSvg("mobility")}<b>使用中：移動命令</b>` : "ALT：味方を1マス移動"}</span>
+        <span class="card-move${moveMode ? " active-use-mode" : ""}">${moveMode ? "移動命令として使用中" : "ALTで移動"}</span>
         ${isLegacy ? `<span class="legacy-tag">LEGACY · FAST</span>` : `<span class="speed ${shown.speed}">${SPEED_LABEL[shown.speed]}</span>`}
       </div>
     `;
@@ -2921,7 +2240,7 @@ function renderIntents() {
   const forecastState = displayTimelineState();
   for (const item of game.intents) {
     const actor = getUnit(item.actorId);
-    if (!actor || actor.hp <= 0) continue;
+    if (!actor || (actor.hp <= 0 && item.id !== "detonate")) continue;
     const target = item.targetId ? getUnit(item.targetId) : null;
     const shownActor = forecastState?.units.find(unit => unit.id === actor.id) || actor;
     const cellTarget = item.targetKind === "cells"
@@ -2952,7 +2271,7 @@ function renderSquad() {
     const unit = forecastState?.units.find(item => item.id === actual.id) || actual;
     const row = document.createElement("div");
     row.className = `squad-member${unit.hp <= 0 ? " down" : ""}`;
-    const statuses = [unit.guard ? `装甲${unit.guard}` : "", unit.ward ? "結界" : "", unit.exposed ? "露出" : ""].filter(Boolean).join(" / ");
+    const statuses = [unit.guard ? `装甲${unit.guard}` : "", unit.rooted ? "足止め" : "", unit.marked ? "目印" : ""].filter(Boolean).join(" / ");
     const hpChanged = unit.hp !== actual.hp;
     row.innerHTML = `
       <div><span class="squad-name">${unit.name}</span> <span class="squad-role">${statuses || unit.role}</span></div>
@@ -3067,7 +2386,7 @@ document.addEventListener("toggle", event => {
 
 function highlightIntentClause(clause) {
   return clause.replace(
-    /(\d+|移動|接近|突進|ダメージ|次ターン|露出|装甲|帯電|柄打ち|解除|回復)/g,
+    /(\d+|移動|接近|ダメージ|次ターン|装甲|足止め|目印|解除|回復)/g,
     "<strong>$1</strong>"
   );
 }
@@ -3132,11 +2451,8 @@ function renderTimeline() {
       <span class="timeline-side">${sideLabel}</span>
       <span class="timeline-name">${view.name}</span>
       <span class="timeline-action">${cancelled ? "取消：" : ""}${view.action}</span>
-      ${event.kind === "enemy" ? `<span class="timeline-flow">予告：${enemyTraceFlow(event.payload.id)}</span>` : ""}
       <span class="speed ${event.speed}">${SPEED_LABEL[event.speed]}</span>
       <span class="timeline-target">対象：${targetLabel}</span>
-      ${effectText ? `<span class="timeline-effects"><span>${highlightIntentClause(escapeEffectText(effectText))}</span></span>` : ""}
-      <span class="timeline-detail-hint">${event.kind === "enemy" ? "盤面で追う・効果詳細 ▾" : "効果詳細 ▾"}</span>
       <span class="timeline-result${outcome ? " predicted" : ""}">${resultLabel}</span>
     `;
     step.disabled = game.phase !== "planning" || provisional;
@@ -3208,7 +2524,7 @@ function renderMovementEvidence(forecast, index) {
     return `<li>${point(cell)} ${name(cell.unitId)}が占有${link}</li>`;
   }).join("");
   let end = "";
-  if (evidence.movementEnd === "rooted") end = "<p>移動不能により移動処理を終了。経路は探索していません。</p>";
+  if (evidence.movementEnd === "rooted") end = "<p>足止めにより移動処理を終了。経路は探索していません。</p>";
   else if (evidence.pathResult === "no_path") end = "<p>対象に上下左右で隣接する位置への経路が見つからず、移動なし。</p>";
   else if (evidence.pathResult === "already_adjacent") end = "<p>開始時から対象と上下左右に隣接しており、移動なし。</p>";
   else if (evidence.movementEnd === "not_requested") end = "<p>開始時の判定で攻撃を選び、移動処理は行いませんでした。</p>";
@@ -3563,15 +2879,14 @@ function showHelp() {
     ${!previous && game.phase === "planning" ? `<button type="button" id="help-guide-button" class="secondary-button">このターンの操作案内を見る</button>`
       : game.phase === "resolving" ? `<p>作戦解決中です。次の計画中に操作案内を開けます。</p>`
       : previous?.screen === "initial" ? `<p>操作案内は戦闘開始後に開けます。</p>` : ""}
-    <div class="brief-step"><b>1</b><span>カードをクリックし、光っている対象マスを選びます。</span></div>
-    <div class="brief-step"><b>2</b><span>FAST → NORMAL → SLOWの順に解決。同速度では味方が先です。</span></div>
-    <div class="brief-step"><b>3</b><span>カードを移動命令へ変える場合は、味方と移動先を順に選びます。</span></div>
-    <p>駒の下部には、上段へ装甲・結界・移動不能、下段へ標的・露出・帯電を固定位置で表示します。</p>
-    <p>駒にポインターを重ねるか、キーボードでマスを選ぶと、盤面の下に有効な状態の詳しい説明が出ます。</p>
-    <p>技の「効果詳細」では規則を、実行順の「この計画の予測結果」では装甲・肩代わりなどを適用した変化を読めます。詳細の開閉だけでは命令を登録しません。</p>
+    <div class="brief-step"><b>1</b><span>盤面の生存味方を選び、手札の技かALT移動を選びます。</span></div>
+    <div class="brief-step"><b>2</b><span>光る対象を選び、敵の予告に対して1～3命令を登録します。</span></div>
+    <div class="brief-step"><b>3</b><span>FAST → NORMAL → SLOWの予測を見て作戦実行。敵を全員倒せば勝利、味方が全員倒れると敗北です。</span></div>
+    <p>一時効果は装甲・足止め・目印の3つです。いずれもターン末に消えます。駒の状態を選ぶと詳細を確認できます。</p>
+    <p>カード表面は対象・射程・数値を短く表示し、技の「効果詳細」とこのHelpで完全な規則を確認できます。</p>
     <details class="help-section"><summary>距離と移動・命令</summary>${["distance", "targets", "orders"].map(renderRuleDetails).join("")}${renderEffectDetails("move", "help", true)}</details>
-    <details class="help-section"><summary>ダメージ・肩代わり・反撃</summary>${["damage", "counter"].map(renderRuleDetails).join("")}</details>
-    <details class="help-section"><summary>状態と次ターン</summary>${["guard", "ward", "rooted", "marked", "exposed", "charge", "turn", "legacy"].map(renderRuleDetails).join("")}</details>
+    <details class="help-section"><summary>ダメージと装甲</summary>${["damage", "guard"].map(renderRuleDetails).join("")}</details>
+    <details class="help-section"><summary>足止め・目印・罠とターン末</summary>${["rooted", "marked", "terrain", "turn", "legacy"].map(renderRuleDetails).join("")}</details>
     <details class="help-section technique-index"><summary>全ての技の説明（敵9・カード12・遺志3）</summary>
       ${[["enemy", "敵の9技"], ["card", "味方の12カード"], ["legacy", "3つの遺志"]].map(([group, title]) => `<section><h3>${title}</h3>${Object.entries(effectCatalog).filter(([, effect]) => effect.group === group).map(([id]) => renderEffectDetails(id, "index", true)).join("")}</section>`).join("")}
     </details>
