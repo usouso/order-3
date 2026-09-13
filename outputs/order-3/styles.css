@@ -339,6 +339,16 @@ h2 { margin: 3px 0 0; font-size: 17px; letter-spacing: .04em; }
 
 .board-footer { display: flex; justify-content: space-between; min-height: 32px; padding-top: 8px; }
 .board-footer p { margin: 0; color: var(--muted); font-size: 12px; }
+.turn-guide { margin: 10px 0 12px; padding: 12px 14px; border: 1px solid var(--cyan); background: var(--panel-2); color: var(--ink); }
+.turn-guide-topline { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.turn-guide-topline p { margin: 0; color: var(--cyan); font-size: 10px; font-weight: 900; }
+.turn-guide h2 { margin: 8px 0 4px; font-size: 17px; }
+.turn-guide > p { margin: 0 0 9px; font-size: 12px; line-height: 1.55; }
+.turn-guide-actions { display: flex; flex-wrap: wrap; gap: 7px; }
+.turn-guide button { min-height: 40px; padding: 6px 10px; border: 1px solid var(--cyan); background: transparent; color: var(--ink); font: inherit; font-size: 11px; cursor: pointer; }
+.turn-guide button:disabled { opacity: .55; cursor: default; }
+.turn-guide button:focus-visible, .turn-guide h2:focus-visible,
+:is(#battlefield-heading, #execution-flow-title, #actor-picker-title, #order-queue-title, #execute-guide-target):focus-visible { outline: 2px solid var(--amber); outline-offset: 3px; }
 .enemy-trace { margin-top: 5px; padding: 8px 10px; border: 1px solid var(--red); background: var(--panel-2); color: var(--ink); font-size: 11px; line-height: 1.45; }
 .enemy-trace-heading { display: flex; justify-content: space-between; align-items: start; gap: 8px; }
 .enemy-trace-heading strong { color: var(--red); }
@@ -707,6 +717,7 @@ h2 { margin: 3px 0 0; font-size: 17px; letter-spacing: .04em; }
 .modal-actions > button { min-height: 44px; max-width: 100%; font-size: 12px; line-height: 1.5; white-space: normal; overflow-wrap: anywhere; }
 .modal-actions > .wide { flex: 1 0 100%; }
 .modal-actions > .secondary-button, .modal-actions > .notes-trigger { flex: 1 1 140px; }
+.modal-actions > #modal-alt-button { border-color: var(--cyan); }
 .modal-actions > .notes-trigger { z-index: auto; }
 .modal :is(button, summary):focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
 .modal-actions > .execute-button:focus-visible { outline-color: white; }
@@ -722,6 +733,7 @@ h2 { margin: 3px 0 0; font-size: 17px; letter-spacing: .04em; }
 .brief-step { display: grid; grid-template-columns: 28px 1fr; gap: 9px; align-items: center; margin: 9px 0; }
 .brief-step b { display: grid; place-items: center; width: 25px; height: 25px; border: 1px solid var(--cyan-dim); border-radius: 50%; color: var(--cyan); }
 .modal-body > p { margin: 17px 0 0; color: var(--amber); }
+.modal-body > #help-guide-button { min-height: 44px; width: 100%; margin-bottom: 8px; }
 
 .movement-evidence { margin-top: 12px; border-top: 1px solid var(--line); min-width: 0; }
 .movement-evidence > summary { min-height: 44px; padding: 12px 4px; cursor: pointer; color: var(--cyan); font-size: 11px; line-height: 1.6; overflow-wrap: anywhere; }
@@ -814,6 +826,8 @@ h2 { margin: 3px 0 0; font-size: 17px; letter-spacing: .04em; }
 }
 
 @media (forced-colors: active) {
+  .turn-guide, .turn-guide button { border-color: CanvasText; background: Canvas; color: CanvasText; }
+  .turn-guide-topline p { color: CanvasText; }
   .enemy-trace, .enemy-trace-heading button, .trace-ordinal { color: CanvasText; border-color: CanvasText; background: Canvas; }
   .enemy-trace-heading strong, .timeline-flow { color: CanvasText; }
   .cell.trace-start, .cell.trace-stop, .cell.trace-target, .cell.trace-trap { outline-color: Highlight; border-color: Highlight; box-shadow: inset 0 0 0 3px Highlight; }

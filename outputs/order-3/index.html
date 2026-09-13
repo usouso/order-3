@@ -25,12 +25,23 @@
       </div>
     </header>
 
+    <section id="turn-guide" class="turn-guide" aria-labelledby="turn-guide-title" hidden>
+      <div class="turn-guide-topline"><p id="turn-guide-status" role="status" aria-live="polite"></p><button id="turn-guide-close" type="button">案内を閉じる</button></div>
+      <h2 id="turn-guide-title" tabindex="-1"></h2>
+      <p id="turn-guide-copy"></p>
+      <div class="turn-guide-actions">
+        <button id="turn-guide-look" type="button">今見る場所</button>
+        <button id="turn-guide-back" type="button">戻る</button>
+        <button id="turn-guide-next" type="button">次へ</button>
+      </div>
+    </section>
+
     <section class="battle-layout">
       <div class="board-panel">
         <div class="panel-heading">
           <div>
             <p class="kicker">FIELD / 6×6</p>
-            <h2>黄昏の演習場</h2>
+            <h2 id="battlefield-heading" tabindex="-1">黄昏の演習場</h2>
           </div>
         </div>
         <div id="battlefield" class="battlefield" role="grid" aria-label="戦場"></div>
@@ -47,7 +58,7 @@
         <div class="timeline-heading">
           <div>
             <p class="kicker">ACTION ORDER</p>
-            <h2 id="execution-flow-title" class="execution-flow">
+            <h2 id="execution-flow-title" class="execution-flow" tabindex="-1">
               左から順に実行 <span aria-hidden="true">01 → 02 → 03 → …</span>
             </h2>
             <p id="speed-order-rule" class="timeline-rule">
@@ -97,7 +108,7 @@
       </div>
 
       <div class="actor-picker" aria-labelledby="actor-picker-title">
-        <p id="actor-picker-title" class="kicker">味方を選ぶ · このキャラの命令</p>
+        <p id="actor-picker-title" class="kicker" tabindex="-1">味方を選ぶ · このキャラの命令</p>
         <div id="actor-strip" class="actor-strip" role="group" aria-label="命令する味方"></div>
         <p id="actor-status" class="actor-status" role="status" aria-live="polite" tabindex="-1"></p>
         <p class="actor-explain">「対象あり」は今の計画で指定可能という意味です。実行時の発動成功は保証しません。</p>
@@ -114,10 +125,10 @@
 
       <div class="queue-row">
         <div>
-          <p class="kicker">ORDER QUEUE</p>
+          <p id="order-queue-title" class="kicker" tabindex="-1">ORDER QUEUE</p>
           <div id="order-queue" class="order-queue"></div>
         </div>
-        <div class="queue-actions">
+        <div id="execute-guide-target" class="queue-actions" tabindex="-1" aria-label="作戦実行ボタンの場所">
           <button id="undo-button" class="secondary-button" disabled>1手戻す</button>
           <button id="execute-button" class="execute-button" disabled>
             <span>EXECUTE</span>
@@ -128,18 +139,20 @@
     </section>
   </main>
 
-  <div id="modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title" data-screen="initial">
+  <div id="modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title" data-screen="initial" data-action="start-guided">
     <div class="modal-card">
       <p class="eyebrow">FIELD BRIEFING</p>
-      <h2 id="modal-title">3枚で、戦況を組み替えろ。</h2>
+      <h2 id="modal-title">敵3体を倒して勝利を目指す。</h2>
       <div id="modal-body" class="modal-body">
         <div class="brief-step"><b>1</b><span>戦場右の実行順で、敵味方の行動と速度を確認。</span></div>
         <div class="brief-step"><b>2</b><span>味方を選び、そのキャラのカードと対象を選ぶ。手札から直接選んでもOK。</span></div>
-        <div class="brief-step"><b>3</b><span>命令を最大3枚並べて「作戦実行」。</span></div>
+        <div class="brief-step"><b>3</b><span>1ターンに最大3命令。1件から「作戦実行」できます。</span></div>
+        <p>敵3体を全員倒せば勝利。味方3人が全員倒れると敗北。1ターンで勝つ必要はありません。</p>
         <p>どのカードも「味方を1マス動かす」命令に変換できます。</p>
       </div>
       <div id="modal-actions" class="modal-actions">
-        <button id="modal-button" type="button" class="execute-button wide">戦闘開始</button>
+        <button id="modal-button" type="button" class="execute-button wide">案内つきで戦闘開始</button>
+        <button id="modal-alt-button" type="button" class="secondary-button">案内なしで戦闘開始</button>
         <button id="modal-help-button" type="button" class="secondary-button" aria-haspopup="dialog" aria-controls="modal">遊び方・全ての技</button>
       </div>
     </div>

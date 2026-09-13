@@ -252,6 +252,10 @@ The browser regression in `work/act18-implementation/behavior.cjs` uses two page
 
 ACT 19 adds an event-key-bound enemy trace to ACTION ORDER. Selecting an enemy event uses its existing forecast snapshot and `movementEvidence`: the preceding snapshot supplies the actor and fixed target positions; `entered` supplies the actual route; the selected snapshot supplies the stop and structured outcome. The trace is display-only and tied to the current plan generation. Queue 0 obtains the same pure forecast on demand. Start, entry order, stop, announced target, and effect cells have separate board marks and a short text account. A pointer-free SVG line connects only actual entered cells. Actor or card selection and plan changes clear the trace; the close control returns to final forecast. The board's native target buttons remain operable. The combat resolver and random sequence are unchanged.
 
+## Optional first-turn guide (ACT 20)
+
+The initial modal states the actual victory and defeat conditions and offers two explicit starts. The guided choice opens a five-step panel in normal document flow over the existing three-ally battle; the other choice opens the same battle without the panel. The panel covers objective, ACTION ORDER, actor and hand, queue and forecast, and explicit execution. Its location control focuses existing non-action headings or the execution-control group and scrolls them into view. Back, next, close, Help reopening and result-screen guided restart change only short-lived guide presentation state. The guide closes on turn execution. It does not select an event/card/target, register a command, spend randomness, alter combat state, or make execution automatic. The existing modal input generation and held-key protection also apply to the new start/restart button.
+
 ## Prototype boundaries
 
 - One 6x6 battlefield.

@@ -1,5 +1,5 @@
 const SIZE = 6;
-const GAME_VERSION = "ACT 19";
+const GAME_VERSION = "ACT 20";
 const SPEED_ORDER = { fast: 0, normal: 1, slow: 2 };
 const SPEED_LABEL = { fast: "FAST", normal: "NORMAL", slow: "SLOW" };
 const WALLS = [{ x: 2, y: 2 }, { x: 3, y: 3 }];
@@ -301,6 +301,14 @@ function clearMovementReading(newPlan = false, newBattle = false) {
 }
 
 const el = {
+  guide: document.querySelector("#turn-guide"),
+  guideStatus: document.querySelector("#turn-guide-status"),
+  guideTitle: document.querySelector("#turn-guide-title"),
+  guideCopy: document.querySelector("#turn-guide-copy"),
+  guideLook: document.querySelector("#turn-guide-look"),
+  guideBack: document.querySelector("#turn-guide-back"),
+  guideNext: document.querySelector("#turn-guide-next"),
+  guideClose: document.querySelector("#turn-guide-close"),
   board: document.querySelector("#battlefield"),
   enemyTrace: document.querySelector("#enemy-trace"),
   statusPopover: document.querySelector("#board-status-popover"),
@@ -330,6 +338,7 @@ const el = {
   modalTitle: document.querySelector("#modal-title"),
   modalBody: document.querySelector("#modal-body"),
   modalButton: document.querySelector("#modal-button"),
+  modalAlt: document.querySelector("#modal-alt-button"),
   modalHelp: document.querySelector("#modal-help-button"),
   modalActions: document.querySelector("#modal-actions"),
   main: document.querySelector("main"),
@@ -342,6 +351,52 @@ const el = {
 let activeActorId = null;
 let actorChoice = null; // null, technique, alt-pick, or alt-target
 function clearActorView() { activeActorId = null; actorChoice = null; }
+
+// Optional, short-lived reading state; no combat action observes it.
+const turnGuide = { active: false, step: 0, announcedStep: null };
+const turnGuideSteps = [
+  { title: "目的と勝敗", target: "#battlefield-heading", copy: () => `敵を全員倒せば勝利、味方が全員倒れると敗北です。現在、敵${living("enemy").length}体・味方${living("player").length}人が生存。1ターンで勝つ必要はありません。盤面の駒と実HPを見てください。` },
+  { title: "敵の予告", target: "#execution-flow-title", copy: () => "ACTION ORDERは左から速度順です。敵カードを自分で開くと、その敵の移動と予告対象を盤面で追えます。命令を足すと予測は変わります。" },
+  { title: "味方と手札", target: "#actor-picker-title", copy: () => "盤面か味方列で一人を選び、手札にある固有技を探せます。手札にない技は使えません。カード直接選択やALT移動もできます。" },
+  { title: "命令と予測", target: "#order-queue-title", copy: () => `カードと対象を自分で選んで登録します。現在${game.queue.length}件／最大3件。1件から実行でき、同じ味方へ複数命令も可能です。ACTION ORDERと予測を見て、1手戻して組み直せます。` },
+  { title: "明示して実行", target: "#execute-guide-target", copy: () => game.queue.length
+    ? `現在${game.queue.length}件の命令があります。「作戦実行」を自分で押すと計画を解決します。案内を終えても自動実行しません。`
+    : "命令はまだ0件です。1件以上登録すると「作戦実行」を押せます。案内を終えても自動実行しません。" }
+];
+
+function renderTurnGuide() {
+  el.guide.hidden = !turnGuide.active || game.phase !== "planning";
+  if (el.guide.hidden) return;
+  const step = turnGuideSteps[turnGuide.step];
+  el.guideTitle.textContent = step.title;
+  el.guideCopy.textContent = step.copy();
+  el.guideLook.setAttribute("aria-controls", step.target.slice(1));
+  el.guideLook.setAttribute("aria-label", `今見る場所：${step.title}`);
+  el.guideBack.disabled = turnGuide.step === 0;
+  el.guideNext.textContent = turnGuide.step === turnGuideSteps.length - 1 ? "案内を終える" : "次へ";
+  if (turnGuide.announcedStep !== turnGuide.step) {
+    el.guideStatus.textContent = `このターンの操作案内 ${turnGuide.step + 1}／${turnGuideSteps.length}：${step.title}`;
+    turnGuide.announcedStep = turnGuide.step;
+  }
+}
+
+function openTurnGuide() {
+  if (game.phase !== "planning") return;
+  turnGuide.active = true;
+  turnGuide.step = 0;
+  turnGuide.announcedStep = null;
+  renderTurnGuide();
+  el.guideTitle.focus({ preventScroll: true });
+  el.guide.scrollIntoView({ block: "nearest" });
+}
+
+function closeTurnGuide(restoreFocus = true) {
+  if (!turnGuide.active) return;
+  turnGuide.active = false;
+  turnGuide.announcedStep = null;
+  el.guide.hidden = true;
+  if (restoreFocus) el.help.focus({ preventScroll: true });
+}
 
 function makeUnits() {
   return [
@@ -364,6 +419,7 @@ function makeUnit(id, name, icon, side, hp, x, y, role) {
 }
 
 function resetGame() {
+  closeTurnGuide(false);
   clearMovementReading(true, true);
   clearActorView();
   game.turn = 1;
@@ -1763,6 +1819,7 @@ function applyCombatState(state) {
 
 async function executeTurn() {
   if (game.phase !== "planning" || !game.queue.length) return;
+  closeTurnGuide(false);
   clearMovementReading(true);
   const forecast = predictTimeline();
   game.activeForecast = forecast;
@@ -2250,6 +2307,7 @@ function render() {
   renderTimeline();
   renderLog();
   renderControls();
+  renderTurnGuide();
 }
 
 function activeStatusEntries(unit) {
@@ -3183,6 +3241,9 @@ function syncModalInteraction() {
     if (el.notesButton.parentNode !== el.modalActions) el.modalActions.appendChild(el.notesButton);
     el.main.inert = true;
     el.modalHelp.hidden = el.modal.dataset.help === "true";
+    const screen = el.modal.dataset.screen;
+    el.modalAlt.hidden = !["initial", "victory", "defeat"].includes(screen);
+    el.modalAlt.textContent = screen === "initial" ? "案内なしで戦闘開始" : "案内つきで再戦";
   } else {
     el.main.inert = false;
     if (notesButtonHome && el.notesButton.parentNode !== notesButtonHome) {
@@ -3205,7 +3266,7 @@ function modalActivationAllowed(event) {
   return true;
 }
 
-function isModalKeyTarget(target) { return target === el.modalButton || target === el.modalHelp; }
+function isModalKeyTarget(target) { return target === el.modalButton || target === el.modalHelp || target === el.modalAlt; }
 
 function modalKeyPressAllowed(press, target) {
   return press && !press.cancelled && press.generation === modalGeneration && press.target === target &&
@@ -3257,6 +3318,9 @@ function showHelp() {
     if (key.startsWith("index-") || key.startsWith("help-")) openEffectDisclosures.delete(key);
   }
   showModal("命令の組み方", `
+    ${!previous && game.phase === "planning" ? `<button type="button" id="help-guide-button" class="secondary-button">このターンの操作案内を見る</button>`
+      : game.phase === "resolving" ? `<p>作戦解決中です。次の計画中に操作案内を開けます。</p>`
+      : previous?.screen === "initial" ? `<p>操作案内は戦闘開始後に開けます。</p>` : ""}
     <div class="brief-step"><b>1</b><span>カードをクリックし、光っている対象マスを選びます。</span></div>
     <div class="brief-step"><b>2</b><span>FAST → NORMAL → SLOWの順に解決。同速度では味方が先です。</span></div>
     <div class="brief-step"><b>3</b><span>カードを移動命令へ変える場合は、味方と移動先を順に選びます。</span></div>
@@ -3274,7 +3338,33 @@ function showHelp() {
   el.modal.dataset.help = "true";
 }
 
+el.modalBody.addEventListener("click", event => {
+  if (event.target?.id !== "help-guide-button" || game.phase !== "planning" || el.modal.hidden || el.modal.dataset.help !== "true") return;
+  activateModalPrimary();
+  openTurnGuide();
+});
+
 el.techniqueMode.addEventListener("click", () => setMode("technique"));
+el.guideNext.addEventListener("click", () => {
+  if (!turnGuide.active) return;
+  if (turnGuide.step === turnGuideSteps.length - 1) { closeTurnGuide(); return; }
+  turnGuide.step += 1;
+  renderTurnGuide();
+  el.guideNext.focus({ preventScroll: true });
+});
+el.guideBack.addEventListener("click", () => {
+  if (!turnGuide.active || turnGuide.step === 0) return;
+  turnGuide.step -= 1;
+  renderTurnGuide();
+  el.guideBack.focus({ preventScroll: true });
+});
+el.guideLook.addEventListener("click", () => {
+  if (!turnGuide.active || game.phase !== "planning") return;
+  const target = document.querySelector(turnGuideSteps[turnGuide.step].target);
+  target?.focus({ preventScroll: true });
+  target?.scrollIntoView({ block: "center" });
+});
+el.guideClose.addEventListener("click", () => closeTurnGuide());
 el.moveMode.addEventListener("click", () => setMode("move"));
 el.cancel.addEventListener("click", () => {
   clearSelection(); actorChoice = null; render();
@@ -3294,7 +3384,7 @@ el.modalHelp.addEventListener("click", event => {
   if (modalActivationAllowed(event)) showHelp();
 });
 
-function activateModalPrimary() {
+function activateModalPrimary(actionOverride = null) {
   if (el.modal.dataset.help === "true" && helpReturnModal) {
     const previous = helpReturnModal;
     showModal(previous.title, previous.body, previous.buttonText, previous.action, previous.screen);
@@ -3305,18 +3395,25 @@ function activateModalPrimary() {
     return;
   }
   helpReturnModal = null;
-  const action = el.modal.dataset.action;
-  if (action === "restart") resetGame();
+  const action = actionOverride || el.modal.dataset.action;
+  if (action === "restart" || action === "restart-guided") resetGame();
   el.modal.hidden = true;
   el.modal.dataset.action = "close";
   el.modal.dataset.help = "false";
   modalGeneration += 1;
   syncModalInteraction();
-  restoreGameDialogFocus(modalReturnFocus);
+  if (action === "start-guided" || action === "restart-guided") openTurnGuide();
+  else restoreGameDialogFocus(modalReturnFocus);
 }
 
 el.modalButton.addEventListener("click", event => {
   if (modalActivationAllowed(event)) activateModalPrimary();
+});
+el.modalAlt.addEventListener("click", event => {
+  if (!modalActivationAllowed(event) || el.modalAlt.hidden) return;
+  const screen = el.modal.dataset.screen;
+  if (screen === "initial") activateModalPrimary("start-no-guide");
+  else if (screen === "victory" || screen === "defeat") activateModalPrimary("restart-guided");
 });
 
 document.addEventListener("click", event => {
@@ -3341,6 +3438,11 @@ document.addEventListener("keydown", event => {
   }
   if (notesAreOpen()) return;
   if (event.key === "Escape" && pinnedStatusPopover) closeStatusPopover(true);
+  if (event.key === "Escape" && el.modal.hidden && turnGuide.active && el.guide.contains(document.activeElement)) {
+    event.preventDefault();
+    closeTurnGuide();
+    return;
+  }
   if (event.key === "Escape" && el.modal.hidden && game.phase === "planning" && activeActorId) {
     event.preventDefault();
     if (selectedCard() || actorChoice) { clearSelection(); actorChoice = null; }
