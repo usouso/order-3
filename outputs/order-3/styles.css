@@ -90,8 +90,8 @@ button:focus-visible { outline: 2px solid white; outline-offset: 3px; }
 }
 
 /* Card-game table at every width and orientation: enemy on top, status and deck on the left, field in the middle,
-   selection and execution on the right, hand bottom-right, own deck and discard bottom-left. The top-left cell stays
-   empty in ACT29 (reserved for the enemy deck). The middle column is minmax(0, 1fr) so no content can widen the page. */
+   selection and execution on the right, hand bottom-right, own deck and discard bottom-left. The top-left cell holds
+   the enemy deck and discard counts (ACT30). The middle column is minmax(0, 1fr) so no content can widen the page. */
 .game-shell {
   display: grid;
   grid-template-columns: var(--side-l) minmax(0, 1fr) var(--side-r);
@@ -160,7 +160,7 @@ h1 span { color: var(--cyan); }
   cursor: pointer;
 }
 
-/* ---- Top center: the three enemy orders. ---- */
+/* ---- Top center: the enemy team's public hand (ACT30). Chosen orders ①②③ first, then the unused cards. ---- */
 .enemy-orders-panel {
   grid-area: enemy;
   display: flex;
@@ -169,44 +169,80 @@ h1 span { color: var(--cyan); }
   gap: 3px;
   min-width: 0;
   min-height: 0;
+  container-type: inline-size;
 }
 .table-title { margin: 0; color: var(--muted); font-size: 12px; font-weight: 800; line-height: 1.25; text-align: center; letter-spacing: .04em; }
 .intent-list {
+  --enemy-card-max: 150px;
   display: grid;
-  grid-template-columns: repeat(var(--enemy-card-count, 3), minmax(0, var(--enemy-card-max, 240px)));
+  grid-template-columns: repeat(var(--enemy-card-count, 5), minmax(0, var(--enemy-card-max)));
   justify-content: center;
   gap: 8px;
   min-width: 0;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }
-.intent-card {
+.enemy-card-slot { display: flex; min-width: 0; min-height: 0; }
+.enemy-card {
+  --enemy-color: var(--red);
   display: flex;
+  flex: 1 1 auto;
   flex-direction: column;
   gap: 1px;
+  width: 100%;
   min-width: 0;
   overflow: hidden;
-  container-type: inline-size;
-  padding: 4px 8px 5px;
+  padding: 3px 7px 4px;
   border: 1px solid var(--line);
-  border-left: 3px solid var(--red);
+  border-top: 3px solid var(--enemy-color);
   border-radius: 4px;
+  color: var(--ink);
   background: var(--panel);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
 }
-.intent-card.current { border-color: var(--red); box-shadow: 0 0 0 1px var(--red); }
-.intent-card.empty { flex-direction: row; align-items: center; gap: 6px; border-left-style: dashed; opacity: .72; }
-.intent-card h3 { display: flex; align-items: center; gap: 6px; min-width: 0; margin: 0; font-size: 12px; line-height: 1.35; white-space: nowrap; }
-.enemy-slot-badge { flex: none; display: inline-grid; place-items: center; padding: 0 4px; border: 1px solid var(--red); border-radius: 4px; color: var(--ink); font-size: 11px; font-weight: 900; line-height: 1.35; white-space: nowrap; }
-/* HP never shrinks; the name｜action takes what is left and ends with an ellipsis. Narrow cards hide the 「HP」 word visually. */
-.intent-name { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.intent-hp { flex: none; color: var(--red); font-size: 10px; }
-@container (max-width: 104px) {
-  .intent-card h3 { gap: 3px; }
-  .enemy-slot-badge { padding: 0 2px; }
-  .intent-hp-label { position: absolute !important; width: 1px !important; height: 1px !important; padding: 0 !important; margin: -1px !important; overflow: hidden !important; clip: rect(0, 0, 0, 0) !important; white-space: nowrap !important; border: 0 !important; }
+.enemy-card[data-enemy-actor="pursuer"] { --enemy-color: #ee6f68; }
+.enemy-card[data-enemy-actor="bastion"] { --enemy-color: #e0a45a; }
+.enemy-card[data-enemy-actor="cantor"] { --enemy-color: #c48cf2; }
+.enemy-card.chosen { border-color: rgba(238,111,104,.55); border-top-color: var(--enemy-color); }
+.enemy-card.unused, .enemy-card.defeated { border-style: dashed; border-top-style: solid; background: rgba(12, 19, 28, 0.55); color: #aab4bf; }
+.enemy-card.defeated { background: repeating-linear-gradient(135deg, rgba(12,19,28,.6), rgba(12,19,28,.6) 6px, rgba(40,48,58,.45) 6px, rgba(40,48,58,.45) 9px); }
+.enemy-card.defeated .enemy-card-name { text-decoration: line-through; }
+.enemy-card.current { border-color: var(--red); box-shadow: 0 0 0 1px var(--red); }
+.enemy-card.linked { outline: 2px dashed var(--amber); outline-offset: -2px; }
+.enemy-card[aria-pressed="true"] { outline: 2px solid white; outline-offset: -2px; }
+.enemy-card.linked[aria-pressed="true"] { outline: 2px dashed var(--amber); }
+.enemy-card-actor { display: none; overflow: hidden; color: var(--enemy-color); font-size: 10px; font-weight: 800; line-height: 1.2; text-overflow: ellipsis; white-space: nowrap; }
+.enemy-card-head { display: flex; align-items: center; gap: 4px; min-width: 0; font-size: 12px; font-weight: 900; line-height: 1.35; white-space: nowrap; }
+.enemy-slot-badge { flex: none; display: inline-grid; place-items: center; width: 16px; height: 16px; border: 1px solid var(--red); border-radius: 50%; color: var(--ink); background: rgba(238,111,104,.2); font-size: 11px; font-weight: 900; line-height: 1; }
+.enemy-card-chip { flex: none; padding: 0 3px; border: 1px dashed currentColor; border-radius: 3px; color: var(--muted); font-size: 10px; font-weight: 800; line-height: 1.3; }
+.enemy-card-chip .chip-short { display: none; }
+.enemy-card-mark { flex: none; color: var(--enemy-color); font-size: 10px; font-weight: 900; }
+.enemy-card-name { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.enemy-card-face { display: -webkit-box; overflow: hidden; color: var(--muted); font-size: 11px; line-height: 1.25; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.enemy-card-target, .enemy-card-reason { overflow: hidden; color: #d8bd96; font-size: 10px; font-weight: 800; line-height: 1.25; text-overflow: ellipsis; white-space: nowrap; }
+.enemy-card-reason { color: #b9c2cc; font-weight: 700; }
+.enemy-card:focus-visible { outline: 2px solid white; outline-offset: 1px; }
+/* Narrow top center (e.g. 667x375, 640x360): chosen cards get more width; unused cards show the enemy letter and 未/撃 only. */
+@container (max-width: 359px) {
+  .intent-list { display: flex; justify-content: center; gap: 4px; }
+  .enemy-card-slot { flex: 1 1 0; }
+  .enemy-card-slot:has(.chosen) { flex-grow: 1.5; }
+  .enemy-card { padding: 2px 3px 3px; }
+  .enemy-card-head { gap: 2px; font-size: 10px; }
+  .enemy-slot-badge { width: 14px; height: 14px; font-size: 10px; }
+  .enemy-card-chip { padding: 0; border: 0; }
+  .enemy-card-chip .chip-long { display: none; }
+  .enemy-card-chip .chip-short { display: inline; }
+  .enemy-card.unused .enemy-card-name, .enemy-card.defeated .enemy-card-name { display: none; }
 }
-.intent-card p { margin: 0; min-width: 0; color: var(--muted); font-size: 11px; line-height: 1.3; }
-.intent-effect { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
-.intent-target { overflow: hidden; color: #d8bd96 !important; font-size: 10px !important; font-weight: 800; text-overflow: ellipsis; white-space: nowrap; }
-.intent-card .intent-empty { overflow: hidden; color: var(--muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ---- Top left: the enemy deck and discard counts (not interactive). ---- */
+.enemy-piles { grid-area: epiles; align-self: center; display: flex; align-items: flex-end; justify-content: center; gap: 12px; min-width: 0; }
+.enemy-piles .pile-back { border-color: rgba(238,111,104,.55); box-shadow: 3px -3px 0 -1px #0b1620, 3px -3px 0 0 rgba(238,111,104,.3); }
 
 /* ---- Left: action order forecast, six rows in resolution order. ---- */
 .timeline-panel {
@@ -438,7 +474,7 @@ h1 span { color: var(--cyan); }
   .hp-track { left: 1px; right: 1px; top: 14px; height: 2px; }
   .unit-statuses { left: 1px; right: 1px; bottom: 1px; }
 }
-.unit-hp-number.changed, .intent-hp.changed, .squad-hp.changed { color: var(--amber); }
+.unit-hp-number.changed, .squad-hp.changed { color: var(--amber); }
 .unit-statuses {
   position: absolute;
   z-index: 4;
@@ -571,6 +607,18 @@ h1 span { color: var(--cyan); }
 .selection-panel:not([data-view="card"]) :is(#mode-bar, #interpose-preview, #cancel-selection) { display: none; }
 .selection-panel:not([data-view="card"]):not([data-view="event"]) #timeline-detail-panel { display: none; }
 .selection-panel:not([data-view="event"]) #enemy-trace { display: none; }
+.selection-panel:not([data-view="enemy-card"]) #enemy-card-detail { display: none; }
+.enemy-card-detail { display: flex; flex-direction: column; gap: 4px; min-width: 0; padding: 7px 8px; border: 1px dashed rgba(238,111,104,.55); border-radius: 4px; color: #c3ccd5; font-size: 11px; line-height: 1.45; }
+.enemy-card-detail p { margin: 0; overflow-wrap: anywhere; }
+.enemy-card-detail-status { color: var(--ink); font-weight: 900; }
+.enemy-card-detail-meta { color: var(--muted); font-size: 10px; }
+.enemy-card-detail-score, .enemy-choice-reason { color: var(--amber); font-weight: 800; }
+.enemy-choice-reason { margin: 4px 0; font-size: 11px; }
+.help-table-scroll { max-width: 100%; overflow-x: auto; }
+.enemy-deck-table { width: 100%; border-collapse: collapse; font-size: 11px; line-height: 1.4; }
+.enemy-deck-table caption { color: var(--ink); font-weight: 800; text-align: left; }
+.enemy-deck-table th, .enemy-deck-table td { padding: 3px 5px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+.enemy-deck-table td:nth-child(4) { white-space: nowrap; }
 
 .queue-actions { display: flex; flex: none; flex-direction: column-reverse; gap: 8px; }
 .queue-actions > button { width: 100%; min-height: 44px; }
@@ -892,7 +940,8 @@ h1 span { color: var(--cyan); }
   }
   .card h3 { font-size: 14px; }
   .timeline-main { font-size: 13px; }
-  .intent-card { padding: 6px 9px; gap: 2px; }
+  .enemy-card { padding: 4px 8px 5px; }
+  .enemy-card-actor { display: block; }
 }
 
 @media (min-height: 1000px) {
@@ -919,7 +968,7 @@ h1 span { color: var(--cyan); }
     --fc-h: clamp(30px, calc((var(--mid-h) - 34px) / 7), 36px); --fc-in-gap: 2px; --fc-pair-gap: 5px; --final-h: var(--fc-h);
     --pile-w: 36px; --pile-h: 48px;
   }
-  #enemy-orders-title, .timeline-heading, .forecast-stage-note, .timeline-sub, .intent-effect, .selection-head .kicker, .execute-button span {
+  #enemy-orders-title, .timeline-heading, .forecast-stage-note, .timeline-sub, .enemy-card-face, .selection-head .kicker, .execute-button span {
     position: absolute !important; width: 1px !important; height: 1px !important; padding: 0 !important; margin: -1px !important; overflow: hidden !important; clip: rect(0, 0, 0, 0) !important; white-space: nowrap !important; border: 0 !important;
   }
   .turn-block strong { font-size: 16px; }
@@ -927,7 +976,9 @@ h1 span { color: var(--cyan); }
   .topbar .topbar-tools { gap: 6px; }
   .topbar .topbar-tools .notes-trigger { min-width: 60px; min-height: 36px; padding: 3px 6px; font-size: 11px; }
   .topbar .icon-button { width: 36px; height: 36px; }
-  .intent-card { padding: 3px 7px; }
+  .enemy-card { padding: 2px 6px 3px; }
+  .intent-list { gap: 4px; }
+  .enemy-piles { gap: 8px; }
   .timeline-panel { gap: 4px; padding: 5px 6px; }
   .timeline-step, .timeline-empty-slot { grid-template-rows: auto; padding: 2px 7px; }
   .timeline-index { grid-row: 1; font-size: 11px; }
@@ -967,10 +1018,15 @@ h1 span { color: var(--cyan); }
     position: absolute !important; width: 1px !important; height: 1px !important; padding: 0 !important; margin: -1px !important; overflow: hidden !important; clip: rect(0, 0, 0, 0) !important; white-space: nowrap !important; border: 0 !important;
   }
   .status-text { flex-direction: row; align-items: baseline; }
-  .intent-card { padding: 2px 6px; }
-  .intent-card h3 { font-size: 11px; line-height: 1.3; }
-  .enemy-slot-badge { font-size: 10px; line-height: 1.25; }
-  .intent-card p { line-height: 1.2; }
+  .intent-list { --enemy-card-max: 120px; }
+  .enemy-card { gap: 0; padding: 1px 5px 2px; border-top-width: 2px; }
+  .enemy-card-head { gap: 3px; font-size: 10px; line-height: 1.2; }
+  .enemy-slot-badge { width: 14px; height: 14px; font-size: 10px; }
+  .enemy-card-chip { line-height: 1.2; }
+  .enemy-card-target, .enemy-card-reason { line-height: 1.2; }
+  .enemy-piles { flex-direction: row; gap: 8px; }
+  .enemy-piles .pile { flex-direction: row-reverse; gap: 4px; align-items: center; }
+  .enemy-piles .pile-back { box-shadow: 2px -2px 0 -1px #0b1620, 2px -2px 0 0 rgba(238,111,104,.3); }
   .timeline-panel { gap: 4px; padding: 2px 4px; }
   .timeline-step, .timeline-empty-slot { padding: 1px 6px; }
   .selection-panel { padding: 5px 6px 6px; }
@@ -999,7 +1055,7 @@ h1 span { color: var(--cyan); }
 }
 
 @media (forced-colors: active) {
-  .timeline-panel, .selection-panel, .intent-card, .timeline-step, .timeline-empty-slot, .card, .pile-back, .battlefield { border-color: CanvasText; }
+  .timeline-panel, .selection-panel, .enemy-card, .timeline-step, .timeline-empty-slot, .card, .pile-back, .battlefield { border-color: CanvasText; }
   .card.selected { outline: 3px solid Highlight; outline-offset: 2px; }
   .timeline-step.selected, .timeline-step.current { outline: 2px solid Highlight; }
   .timeline-step.provisional { outline: 3px dotted Highlight; outline-offset: -1px; }
@@ -1033,11 +1089,17 @@ h1 span { color: var(--cyan); }
     forced-color-adjust: auto;
   }
   .enemy-slot-badge, .timeline-empty-slot { border-color: CanvasText; color: CanvasText; }
-  .intent-card.current { outline: 3px solid Highlight; outline-offset: -3px; }
+  .enemy-card.chosen { border-style: solid; }
+  .enemy-card.unused { border-style: dashed; }
+  .enemy-card.defeated { border-style: dotted; background: Canvas; }
+  .enemy-card.current { outline: 3px solid Highlight; outline-offset: -3px; }
+  .enemy-card.linked { outline: 3px dashed Highlight; outline-offset: -3px; }
+  .enemy-card-chip, .enemy-card-mark, .enemy-card-actor { color: CanvasText; }
+  .enemy-card-detail { border-color: CanvasText; }
   .board-status-popover { border-color: CanvasText; }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .enemy-trace-path, .cell, .cell.trace-start, .cell.trace-stop, .cell.trace-target, .cell.trace-effect, .cell.trace-trap, .cell.rune::after,
-  .timeline-step, .intent-card, .card, .unit.hit, .unit.projected-unit, .battlefield.shake, .hp-fill { animation: none; transition: none; }
+  .timeline-step, .enemy-card, .card, .unit.hit, .unit.projected-unit, .battlefield.shake, .hp-fill { animation: none; transition: none; }
 }

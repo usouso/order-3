@@ -9,7 +9,8 @@
 </head>
 <body>
   <div class="noise" aria-hidden="true"></div>
-  <!-- ACT29 table layout: DOM and reading order is status, enemy orders, forecast, field, selection, own piles, hand. -->
+  <!-- ACT29 table layout: DOM and reading order is status, enemy hand, forecast, field, selection, own piles, hand.
+       ACT30 adds the enemy deck and discard counts (top-left cell) after the enemy hand. -->
   <main class="game-shell table">
     <header class="topbar">
       <div class="status-text">
@@ -26,9 +27,16 @@
       </div>
     </header>
 
-    <section id="enemy-orders" class="enemy-orders-panel" aria-labelledby="enemy-orders-title">
-      <h2 id="enemy-orders-title" class="table-title" tabindex="-1">敵の命令（計画前に確定）</h2>
-      <div id="intent-list" class="intent-list"></div>
+    <section id="enemy-orders" class="enemy-orders-panel" aria-labelledby="enemy-orders-title" aria-describedby="enemy-hand-rule">
+      <h2 id="enemy-orders-title" class="table-title" tabindex="-1">敵の手札（公開）</h2>
+      <p id="enemy-hand-rule" class="sr-only">①②③の付いた3枚までが、計画前に確定した今ターンの敵の命令です。</p>
+      <ol id="intent-list" class="intent-list enemy-hand" aria-label="敵の手札5枚"></ol>
+    </section>
+
+    <section id="enemy-piles" class="enemy-piles" aria-labelledby="enemy-piles-title">
+      <h2 id="enemy-piles-title" class="sr-only">敵の山札と捨て札</h2>
+      <p class="pile enemy-pile"><span class="pile-label">敵 山札</span><span class="pile-back"><b id="enemy-deck-count">0</b><span class="sr-only">枚</span></span></p>
+      <p class="pile enemy-pile"><span class="pile-label">捨て札</span><span class="pile-back"><b id="enemy-discard-count">0</b><span class="sr-only">枚</span></span></p>
     </section>
 
     <section class="timeline-panel execution-panel" aria-labelledby="execution-flow-title">
@@ -110,6 +118,7 @@
           </section>
           <p id="interpose-preview-status" class="interpose-preview-status" role="status" aria-live="polite" aria-atomic="true"></p>
           <div id="selection-statuses" class="selection-statuses" hidden></div>
+          <section id="enemy-card-detail" class="enemy-card-detail" aria-label="敵の札の詳細" hidden></section>
           <div id="enemy-trace" class="enemy-trace" aria-live="polite" hidden></div>
           <div id="timeline-detail-panel" class="timeline-detail-panel" hidden></div>
 

@@ -177,8 +177,12 @@
     return { url: prefilled ? url.href : TARGET, body, long: !prefilled, prefilled };
   }
   /* ACT26 play log: seeded shuffle source, per-run recorder and local run store. No DOM, no network. */
+  // The "v1" in the key prefix names the storage namespace, not the schema version: v1 and v2 runs share it.
   const PLAYLOG_PREFIX = "order3.playlog.v1.run.";
-  const PLAYLOG_SCHEMA = 1;
+  // ACT30 writes schema v2 (no speed; enemy seed, enemy piles and slot-numbered enemy intents). Schema v1 runs (ACT26-29) stay readable.
+  const PLAYLOG_SCHEMA = 2;
+  const PLAYLOG_SCHEMAS = Object.freeze([1, 2]);
+  const runSchema = run => run && typeof run === "object" && !Array.isArray(run) && Object.hasOwn(run, "schemaVersion") ? run.schemaVersion : 1;
   const PLAYLOG_LIMITS = Object.freeze({ runs: 20, chars: 1500000, turns: 60, comments: 50, commentCodePoints: 140 });
   const MINUTE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}Z$/;
 
@@ -216,9 +220,10 @@
   // Plain, whitelisted copies. Unknown fields never enter a log.
   const cellRecord = cell => ({ x: cell.x, y: cell.y });
   const unitRecord = unit => ({ id: unit.id, hp: unit.hp, x: unit.x, y: unit.y, guard: unit.guard, rooted: unit.rooted, marked: unit.marked });
+  // Schema v2 queue record (ACT30): the speed key is gone.
   function queueRecord(action) {
     return { instanceId: action.instanceId ?? action.instance?.instanceId, cardId: action.cardId, mode: action.mode, actorId: action.actorId,
-      targetId: action.targetId ?? null, target: action.target ? cellRecord(action.target) : null, speed: action.speed };
+      targetId: action.targetId ?? null, target: action.target ? cellRecord(action.target) : null };
   }
   function commentContextRecord(context) {
     const selection = context?.selection;
@@ -326,6 +331,54 @@
       && arr(value.turns, `${path}.turns`, turn, PLAYLOG_LIMITS.turns) && arr(value.comments, `${path}.comments`, comment, PLAYLOG_LIMITS.comments)
       // The recorder sets truncated only when a turn starts with the turn limit already recorded, so any shorter run is not a recorder output.
       && (!value.truncated || value.turns.length === PLAYLOG_LIMITS.turns || fail(`${path}.truncated`, `true only with ${PLAYLOG_LIMITS.turns} recorded turns`));
+    // Schema v2 (ACT30). The v1 rules above are unchanged; a run with a schemaVersion key is checked by these instead.
+    const slot = (value, path) => int(value, path, 1, 3);
+    const enemyIds = (value, path) => arr(value, path, (id, itemPath) => str(id, itemPath), 20);
+    const queue2 = (value, path) => obj(value, path, ["instanceId", "cardId", "mode", "actorId", "targetId", "target"])
+      && str(value.instanceId, `${path}.instanceId`) && str(value.cardId, `${path}.cardId`)
+      && oneOf(value.mode, `${path}.mode`, ["technique", "move", "legacy"]) && str(value.actorId, `${path}.actorId`)
+      && optStr(value.targetId, `${path}.targetId`) && (value.target === null || cell(value.target, `${path}.target`));
+    const intent2 = (value, path) => obj(value, path, ["slot", "instanceId", "id", "actorId", "targetId", "cells"]) && slot(value.slot, `${path}.slot`)
+      && str(value.instanceId, `${path}.instanceId`) && str(value.id, `${path}.id`) && str(value.actorId, `${path}.actorId`)
+      && optStr(value.targetId, `${path}.targetId`) && cells(value.cells, `${path}.cells`);
+    const start2 = (value, path) => obj(value, path, ["rngCalls", "units", "hostileRunes", "emberRunes", "hand", "deckCount", "discardCount", "deckOrder", "discardOrder", "intents",
+      "enemyRngCalls", "enemyHand", "enemyDeckOrder", "enemyDiscardOrder"])
+      && int(value.rngCalls, `${path}.rngCalls`) && arr(value.units, `${path}.units`, unit, 12) && cells(value.hostileRunes, `${path}.hostileRunes`)
+      && cells(value.emberRunes, `${path}.emberRunes`) && arr(value.hand, `${path}.hand`, card, 12) && int(value.deckCount, `${path}.deckCount`, 0, 99)
+      && int(value.discardCount, `${path}.discardCount`, 0, 99) && ids(value.deckOrder, `${path}.deckOrder`) && ids(value.discardOrder, `${path}.discardOrder`)
+      && arr(value.intents, `${path}.intents`, intent2, 3) && int(value.enemyRngCalls, `${path}.enemyRngCalls`) && arr(value.enemyHand, `${path}.enemyHand`, card, 5)
+      && enemyIds(value.enemyDeckOrder, `${path}.enemyDeckOrder`) && enemyIds(value.enemyDiscardOrder, `${path}.enemyDiscardOrder`);
+    const commit2 = (value, path) => value === null || (obj(value, path, ["planMs", "undoCount", "returnCount", "handOrder", "queue"])
+      && int(value.planMs, `${path}.planMs`) && int(value.undoCount, `${path}.undoCount`) && int(value.returnCount, `${path}.returnCount`)
+      && ids(value.handOrder, `${path}.handOrder`) && arr(value.queue, `${path}.queue`, queue2, 3));
+    const event2 = (value, path) => obj(value, path, ["key", "kind", "slot", "status", "reason"]) && str(value.key, `${path}.key`)
+      && oneOf(value.kind, `${path}.kind`, ["player", "enemy"]) && slot(value.slot, `${path}.slot`)
+      && oneOf(value.status, `${path}.status`, ["resolved", "cancelled"]) && str(value.reason, `${path}.reason`, 1000);
+    const result2 = (value, path) => value === null || (obj(value, path, ["events", "units", "hostileRunes", "emberRunes", "battle", "deckOrder", "discardOrder", "enemyDeckOrder", "enemyDiscardOrder"])
+      && arr(value.events, `${path}.events`, event2, 6) && arr(value.units, `${path}.units`, unit, 12)
+      && cells(value.hostileRunes, `${path}.hostileRunes`) && cells(value.emberRunes, `${path}.emberRunes`) && battle(value.battle, `${path}.battle`)
+      && ids(value.deckOrder, `${path}.deckOrder`) && ids(value.discardOrder, `${path}.discardOrder`)
+      && enemyIds(value.enemyDeckOrder, `${path}.enemyDeckOrder`) && enemyIds(value.enemyDiscardOrder, `${path}.enemyDiscardOrder`));
+    const turn2 = (value, path) => obj(value, path, ["turn", "start", "commit", "result"]) && int(value.turn, `${path}.turn`, 1, 999)
+      && start2(value.start, `${path}.start`) && commit2(value.commit, `${path}.commit`) && result2(value.result, `${path}.result`)
+      && (value.commit !== null || value.result === null || fail(`${path}.result`, "null expected without commit"));
+    const comment2 = (value, path) => obj(value, path, ["commentId", "turn", "phase", "ms", "text", "context"]) && str(value.commentId, `${path}.commentId`, 40)
+      && int(value.turn, `${path}.turn`, 1, 999) && oneOf(value.phase, `${path}.phase`, ["planning", "resolving", "ended"]) && int(value.ms, `${path}.ms`)
+      && (commentText(value.text).ok && commentText(value.text).text === value.text || fail(`${path}.text`, "1-140 code points without newline expected"))
+      && obj(value.context, `${path}.context`, ["selection", "queue", "preview", "battle"]) && selection(value.context.selection, `${path}.context.selection`)
+      && arr(value.context.queue, `${path}.context.queue`, queue2, 3) && preview(value.context.preview, `${path}.context.preview`)
+      && battle(value.context.battle, `${path}.context.battle`);
+    const run2 = (value, path) => obj(value, path, ["schemaVersion", "runId", "gameVersion", "startedAt", "rng", "seed", "enemySeed", "layout", "status", "updatedAt", "exportedAt", "truncated", "turns", "comments"])
+      && oneOf(value.schemaVersion, `${path}.schemaVersion`, [2])
+      && (str(value.runId, `${path}.runId`, 80) && /^[A-Za-z0-9_-]{1,80}$/.test(value.runId) || fail(`${path}.runId`, "id characters expected"))
+      && str(value.gameVersion, `${path}.gameVersion`, 40) && minute(value.startedAt, `${path}.startedAt`) && oneOf(value.rng, `${path}.rng`, ["mulberry32"])
+      && (isUint32(value.seed) || fail(`${path}.seed`, "uint32 expected")) && (isUint32(value.enemySeed) || fail(`${path}.enemySeed`, "uint32 expected"))
+      && oneOf(value.layout, `${path}.layout`, ["narrow", "medium", "wide"])
+      && oneOf(value.status, `${path}.status`, ["playing", "victory", "defeat"]) && minute(value.updatedAt, `${path}.updatedAt`)
+      && (value.exportedAt === null || minute(value.exportedAt, `${path}.exportedAt`)) && bool(value.truncated, `${path}.truncated`)
+      && arr(value.turns, `${path}.turns`, turn2, PLAYLOG_LIMITS.turns) && arr(value.comments, `${path}.comments`, comment2, PLAYLOG_LIMITS.comments)
+      && (!value.truncated || value.turns.length === PLAYLOG_LIMITS.turns || fail(`${path}.truncated`, `true only with ${PLAYLOG_LIMITS.turns} recorded turns`));
+    const anyRun = (value, path) => runSchema(value) === 1 ? run(value, path) : run2(value, path);
     const legacyNote = (value, path) => obj(value, path, ["kind", "body", "createdAt", "updatedAt", "scene"]) && str(value.kind, `${path}.kind`)
       && (typeof value.body === "string" || fail(`${path}.body`, "string expected"));
     const legacy = (value, path) => {
@@ -337,11 +390,12 @@
     };
     const log = (value, path) => {
       if (value?.format !== "order3log") return fail(`${path}.format`, "order3log expected");
-      if (value.schemaVersion !== PLAYLOG_SCHEMA) return fail(`${path}.schemaVersion`, `unsupported ${JSON.stringify(value.schemaVersion)}`);
+      if (!PLAYLOG_SCHEMAS.includes(value.schemaVersion)) return fail(`${path}.schemaVersion`, `unsupported ${JSON.stringify(value.schemaVersion)}`);
+      // A v1 file (exported by ACT28/29) holds only v1 runs; a v2 file may mix v1 and v2 runs.
       return obj(value, path, ["format", "schemaVersion", "exportedAt", "exportedBy", "runs", "legacyNotes"]) && minute(value.exportedAt, `${path}.exportedAt`)
-        && str(value.exportedBy, `${path}.exportedBy`, 40) && arr(value.runs, `${path}.runs`, run) && legacy(value.legacyNotes, `${path}.legacyNotes`);
+        && str(value.exportedBy, `${path}.exportedBy`, 40) && arr(value.runs, `${path}.runs`, value.schemaVersion === 1 ? run : anyRun) && legacy(value.legacyNotes, `${path}.legacyNotes`);
     };
-    return { errors, run, log };
+    return { errors, run: anyRun, log };
   }
   function validateRun(run) { const check = validator(); const ok = Boolean(check.run(run, "run")); return { ok: ok && !check.errors.length, errors: check.errors }; }
   function validateLog(log) { const check = validator(); const ok = Boolean(check.log(log, "log")); return { ok: ok && !check.errors.length, errors: check.errors }; }
@@ -376,7 +430,8 @@
       if (cached && cached.raw === raw) return cached.run;
       let data = null;
       try { data = JSON.parse(raw); } catch { data = null; }
-      const run = data?.schemaVersion === PLAYLOG_SCHEMA && Object.keys(data).length === 2 && validateRun(data.run).ok
+      // Entries of both schema versions are read; the entry version must equal its run's version (a v1 run keeps a v1 entry).
+      const run = PLAYLOG_SCHEMAS.includes(data?.schemaVersion) && data.schemaVersion === runSchema(data.run) && Object.keys(data).length === 2 && validateRun(data.run).ok
         && key === PLAYLOG_PREFIX + data.run.runId ? data.run : null;
       parsed.set(key, { raw, run });
       return run;
@@ -407,7 +462,7 @@
       write(run, currentRunId = run.runId) {
         try {
           const storage = getStorage();
-          const value = JSON.stringify({ schemaVersion: PLAYLOG_SCHEMA, run });
+          const value = JSON.stringify({ schemaVersion: runSchema(run), run });
           if (value.length > PLAYLOG_LIMITS.chars) return { ok: false, error: "limit", evicted: [] };
           const others = entries(storage).runs.filter(entry => entry.run.runId !== run.runId);
           let count = others.length + 1;
@@ -453,10 +508,10 @@
       storage = written.ok ? { state: "saved", error: "" } : { state: "memory", error: written.error };
     }
     return {
-      battleStart({ seed, gameVersion, width }) {
+      battleStart({ seed, enemySeed, gameVersion, width }) {
         const stamp = minuteStamp(now());
-        run = { runId: runId(), gameVersion, startedAt: stamp, rng: "mulberry32", seed: seed >>> 0, layout: layoutClass(width),
-          status: "playing", updatedAt: stamp, exportedAt: null, truncated: false, turns: [], comments: [] };
+        run = { schemaVersion: PLAYLOG_SCHEMA, runId: runId(), gameVersion, startedAt: stamp, rng: "mulberry32", seed: seed >>> 0, enemySeed: enemySeed >>> 0,
+          layout: layoutClass(width), status: "playing", updatedAt: stamp, exportedAt: null, truncated: false, turns: [], comments: [] };
         persisted = false;
         storage = { state: "memory", error: "" };
         startedClock = clock();
@@ -483,9 +538,9 @@
         touch();
         save();
       },
-      turnResolved({ turn, events, units, hostileRunes, emberRunes, battle, deckOrder, discardOrder }) {
+      turnResolved({ turn, events, units, hostileRunes, emberRunes, battle, deckOrder, discardOrder, enemyDeckOrder, enemyDiscardOrder }) {
         const record = turnRecord(turn);
-        if (record?.commit) record.result = clone({ events, units, hostileRunes, emberRunes, battle, deckOrder, discardOrder });
+        if (record?.commit) record.result = clone({ events, units, hostileRunes, emberRunes, battle, deckOrder, discardOrder, enemyDeckOrder, enemyDiscardOrder });
         if (!run) return;
         if (battle) run.status = battle;
         touch();
@@ -532,7 +587,7 @@
 
   const api = { KEY, TARGET, FORM_ENTRY, LEGACY_TARGET, KINDS, clone, sameContent, parse, merge, createStore, newId,
     newSubmissionId, sceneText, markdown, sharePayload, formKey, formText, formPayload,
-    PLAYLOG_PREFIX, PLAYLOG_SCHEMA, PLAYLOG_LIMITS, rngValue, createRng, chooseSeed, minuteStamp, layoutClass, codePoints, commentText,
+    PLAYLOG_PREFIX, PLAYLOG_SCHEMA, PLAYLOG_SCHEMAS, runSchema, PLAYLOG_LIMITS, rngValue, createRng, chooseSeed, minuteStamp, layoutClass, codePoints, commentText,
     queueRecord, unitRecord, cellRecord, commentContextRecord, commentSceneLine, validateRun, validateLog, buildLogEnvelope, firstDifference,
     createRunStore, createRecorder };
   if (typeof module !== "undefined" && module.exports) module.exports = api;

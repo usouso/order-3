@@ -1,25 +1,43 @@
 const SIZE = 6;
-const GAME_VERSION = "ACT 29";
-// Play-log schema v1 still requires a speed on queue, intent and event records. All actions share this one value; nothing reads it.
-const UNIFORM_SPEED = "normal";
-// Enemy order number by action id, fixed at turn start. It keeps the enemies' relative order from the former speed rule.
-const ENEMY_SLOT = { stalk: 1, cover: 2, inscribe: 3, pounce: 1, shield_drive: 2, detonate: 3, brace: 1, drain: 2, recover: 3 };
-const ENEMY_CYCLE = { pursuer: ["stalk", "pounce", "recover"], bastion: ["cover", "shield_drive", "brace"], cantor: ["inscribe", "detonate", "drain"] };
+const GAME_VERSION = "ACT 30";
 const SLOT_MARK = ["①", "②", "③"];
+// ACT30 enemy team deck: 15 cards, five per enemy. This order is the card number order (initial deck order and tie order).
+// Numbers mirror resolveSimEnemy, which does not read this table. Target types name the user's side generically
+// ("opponent", "friend") so the same card shape can later be used by allies; the screen text reads them from the enemy side.
+// Enemy-only premises: cover prefers the living Cantor, and runes hurt only the placing side's opponents.
+const ENEMY_CARD_DEFS = [
+  { id: "stalk", ownerId: "pursuer", name: "忍び寄る", category: "attack", copies: 2, target: "nearest-opponent", steps: 2, amount: 2, face: "2歩接近・隣接で2ダメージ" },
+  { id: "pounce", ownerId: "pursuer", name: "飛びかかり", category: "attack", copies: 1, target: "nearest-opponent", steps: 3, amount: 4, face: "3歩接近・隣接で4ダメージ" },
+  { id: "recover", ownerId: "pursuer", name: "息を整える", category: "attack", copies: 2, target: "nearest-opponent", steps: 1, amount: 2, face: "1歩接近・隣接で2ダメージ" },
+  { id: "cover", ownerId: "bastion", name: "装甲支援", category: "guard", copies: 2, target: "preferred-friend-or-self", preferredId: "cantor", armor: 4, face: "詠唱師か自身に装甲+4" },
+  { id: "shield_drive", ownerId: "bastion", name: "盾の圧力", category: "attack", copies: 2, target: "nearest-opponent", steps: 1, amount: 3, face: "1歩接近・隣接で3ダメージ" },
+  { id: "brace", ownerId: "bastion", name: "構え", category: "guard", copies: 1, target: "self", armor: 6, face: "自身に装甲+6" },
+  { id: "inscribe", ownerId: "cantor", name: "災印を刻む", category: "rune", copies: 1, target: "cross-cells-on-nearest-opponent", face: "十字マスに災印を設置" },
+  { id: "detonate", ownerId: "cantor", name: "災印起爆", category: "rune", copies: 2, target: "rune-cells", amount: 4, face: "災印上の味方に各4ダメージ" },
+  { id: "drain", ownerId: "cantor", name: "生命吸収", category: "attack", copies: 2, target: "nearest-opponent", amount: 2, heal: 2, face: "2ダメージ、自身を2回復" }
+];
+const ENEMY_CARD_BY_ID = Object.fromEntries(ENEMY_CARD_DEFS.map((def, index) => [def.id, { ...def, number: index + 1 }]));
+const ENEMY_CATEGORY_ORDER = { guard: 0, attack: 1, rune: 2 };
+const ENEMY_CATEGORY_LABEL = { guard: "守り", attack: "攻撃", rune: "災印" };
+const ENEMY_MARK = { pursuer: "P", bastion: "B", cantor: "C" };
+const ENEMY_HAND_SIZE = 5;
+const ENEMY_ACTOR_LIMIT = 2;
 const WALLS = [{ x: 2, y: 2 }, { x: 3, y: 3 }];
 
 // Display-only contracts. Combat resolution never reads this catalogue.
 const effectRules = {
   distance: { name: "距離と移動", text: "射程は上下左右のマス数。接近は壁・生存駒を通らず、隣接する空き位置へ右→左→下→上の順で探します。足止めや経路なしなら動きません。罠で止まっても、生存して隣接なら攻撃できます。" },
-  targets: { name: "敵予告の対象", text: "敵の対味方行動はターン開始時の最寄りの生存味方を固定。同距離ならHPが低い方、さらに同じならルーク→ヴェイル→イオナ。予告後は選び直さず、災印も予告座標に固定します。敵の番号①②③はターン開始時に決まり、計画中も解決中も変わりません。" },
-  orders: { name: "順番と命令", text: "命令は 味方①→敵①→味方②→敵②→味方③→敵③ の順に解決。味方の番号は登録順、敵の番号は計画前に確定して上段に表示。命令のない枠は飛ばす。1～3命令で実行。対象は命令直前の予測で選び、実行時に戦闘不能・射程外・占有なら不発。全敵または全味方の戦闘不能で残りは取消。" },
+  targets: { name: "敵の札の対象", text: "敵の札の対象はターン開始時の最寄りの生存味方に固定。同距離ならHPが低い方、さらに同じならルーク→ヴェイル→イオナ。選び直さず、災印も予告座標に固定します。" },
+  orders: { name: "順番と命令", text: "命令は 味方①→敵①→味方②→敵②→味方③→敵③ の順に解決。味方の番号は登録順、敵の番号は計画前に敵の手札から選ばれた札の順。命令のない枠は飛ばす。1～3命令で実行。対象は命令直前の予測で選び、実行時に戦闘不能・射程外・占有なら不発。全敵または全味方の戦闘不能で残りは取消。" },
+  enemyHand: { name: "敵の手札", text: "敵チームは3体の札15枚の山札から毎ターン5枚引いて公開します。敵はターン開始時の盤面で点の高い札から最大3枚を選びます（同じ名前は1枚、1体2枚まで、命令数は生存している敵の数まで、撃破済みの敵の札は使えません）。順番は守り→攻撃→災印、同じ種類は点の高い順で、枚数が少ないときは敵③から埋めます。計画中に選び直しません。使った札も残りも捨て札へ送り、山札が空なら混ぜます。" },
+  enemyScore: { name: "敵の札の点", text: "撃破できる攻撃 +100。届く攻撃 ダメージ×10（生命吸収は回復×5を加算）。災印起爆 災印上の味方1人につき40、その中にHP4以下の味方がいれば +100（誰もいなければ3）。狙われる守り 装甲×5（守る相手の5マス以内に味方がいるとき、いなければ2）。災印を刻む 十字マスの味方1人につき15（災印が残っていれば使わない）。届かない接近 5＋歩数。" },
   damage: { name: "ダメージ", text: "目印がある敵への次の味方由来ダメージに+3して目印を消費。装甲で全吸収しても消費します。その後装甲が吸収し、残りだけHPが減ります。" },
   guard: { name: "装甲", text: "装甲は加算でき、HPより先にダメージを吸収。残りはターン末に消えます。柄打ちは指定した敵の装甲を0にしてから攻撃します。" },
   rooted: { name: "足止め", text: "このターンの接近移動を止めます。攻撃は取り消さず、既に隣接していれば攻撃を受けます。ターン末に消えます。" },
   marked: { name: "目印", text: "このターン、次にその敵が受ける味方由来ダメージ+3。一回で消費、装甲で全吸収しても消費。重ねても増えず、未使用ならターン末に消えます。連鎖火花の各被害者で独立に判定します。" },
-  terrain: { name: "罠と災印", text: "火種の罠は敵進入時に一回だけ3ダメージと移動停止。未発動でもターン末に消えます。災印は予告した十字マスへ置き、次ターンの起爆時にそこにいる生存味方へ各4ダメージ。起爆後も詠唱師の戦闘不能による取消時も消えます。同じマスに重ねません。" },
+  terrain: { name: "罠と災印", text: "火種の罠は敵進入時に一回だけ3ダメージと移動停止。未発動でもターン末に消えます。災印は予告した十字マスへ置き、災印起爆の札が使われたときにそこにいる生存味方へ各4ダメージ。起爆後、詠唱師の戦闘不能による取消時、詠唱師が戦闘不能のターン末に消えます。同じマスに重ねません。" },
   legacy: { name: "遺志とALT", text: "持ち主が戦闘不能の手札は共通の遺志として、生存味方一人へ距離無制限で装甲+2。登録後に持ち主が倒れた固有技は変換せず不発。どのカードも代わりにALT移動へ変換できます。" },
-  turn: { name: "ターン末", text: "HPと位置は残ります。装甲・足止め・目印・未発動の火種の罠はターン末に消え、災印は次ターンの起爆まで残ります。余った手札と使用カードは捨て札へ。山札が空なら混ぜて5枚まで引きます。最終予測はこの解除とドロー前。" },
+  turn: { name: "ターン末", text: "HPと位置は残ります。装甲・足止め・目印・未発動の火種の罠はターン末に消え、災印は起爆まで残ります（詠唱師が戦闘不能ならターン末に消えます）。余った手札と使用カードは捨て札へ。敵の手札5枚も捨て札へ送ります。山札が空なら混ぜて5枚まで引きます。最終予測はこの解除とドロー前。" },
 };
 
 const effectCatalog = {
@@ -29,8 +47,8 @@ const effectCatalog = {
   cover: { name: "装甲支援", group: "enemy", short: "詠唱師が生存なら詠唱師、そうでなければ自身に装甲+4。", detail: ["距離制限なし。ダメージの移し替えはありません。"], rules: ["guard", "orders"] },
   shield_drive: { name: "盾の圧力", group: "enemy", short: "最寄りの味方へ最大1歩接近し、隣接なら3ダメージ。", detail: ["対象はターン開始時に固定。追加の状態効果なし。"], rules: ["targets", "distance", "damage", "rooted"] },
   brace: { name: "構え", group: "enemy", short: "自身に装甲+6。残りはターン末に消える。", detail: ["他の装甲と加算します。"], rules: ["guard", "turn"] },
-  inscribe: { name: "災印を刻む", group: "enemy", short: "最寄りの味方の十字マスに災印。次ターンに各4ダメージ。", detail: ["予告された中心と上下左右の壁・盤外以外の座標へ設置。設置時はダメージなし。"], rules: ["targets", "terrain", "orders"] },
-  detonate: { name: "災印起爆", group: "enemy", short: "災印上の生存味方に各4ダメージを与え、災印を消す。", detail: ["敵には当たりません。詠唱師が戦闘不能で取消でも、この行動順に災印を消します。"], rules: ["terrain", "damage", "orders"] },
+  inscribe: { name: "災印を刻む", group: "enemy", short: "最寄りの味方の十字マスに災印。災印起爆の札で各4ダメージ。", detail: ["予告された中心と上下左右の壁・盤外以外の座標へ設置。設置時はダメージなし。災印が残っているターンは使いません。"], rules: ["targets", "terrain", "orders"] },
+  detonate: { name: "災印起爆", group: "enemy", short: "災印上の生存味方に各4ダメージを与え、災印を消す。", detail: ["敵には当たりません。災印が無いターンは使いません。詠唱師が戦闘不能で取消でも、この行動順に災印を消します。"], rules: ["terrain", "damage", "orders"] },
   drain: { name: "生命吸収", group: "enemy", short: "最寄りの味方に2ダメージ、自身を最大2回復。", detail: ["対象はターン開始時に固定。対象が戦闘不能なら不発。詠唱師自身のHP上限を超えて回復しません。"], rules: ["targets", "damage", "orders"] },
   forward_cut: { name: "踏み込み斬り", group: "card", short: "敵・射程2。距離2なら1歩接近、隣接なら3ダメージ。", detail: ["隣接して始めれば移動なし。接近後も隣接できなければ攻撃は不発。"], rules: ["distance", "damage", "orders", "legacy"] },
   interpose: { name: "割って入る", group: "card", short: "他の味方・射程2。最大2歩接近し、経路なしでも両者に装甲+2。", detail: ["実行時に射程を再判定せず、対象への空き経路を進みます。登録前の対象別仮予測で経路を確認できます。"], rules: ["distance", "guard", "orders", "legacy"] },
@@ -165,6 +183,16 @@ const game = {
   log: [],
   instanceCounter: 0,
   rng: null,
+  // ACT30 enemy team deck. A separate seeded stream shuffles it, so the ally stream is the same as in ACT29.
+  enemyDeck: [],
+  enemyHand: [],
+  enemyDiscard: [],
+  enemyInstanceCounter: 0,
+  enemyRng: null,
+  // Frozen at turn start by commitEnemyPlan: one evaluation row per enemy hand card. The screen only reads it.
+  enemyPlan: [],
+  // Display-only: the unused enemy card read in the right column.
+  enemyCardFocus: null,
   timelineCursor: -1,
   previewIndex: null,
   activeForecast: null,
@@ -199,7 +227,11 @@ function playlogTurnStart() {
       discardCount: game.discard.length,
       deckOrder: game.deck.map(card => card.instanceId),
       discardOrder: game.discard.map(card => card.instanceId),
-      intents: game.intents.map(item => ({ actorId: item.actorId, id: item.id, speed: item.speed, targetId: item.targetId ?? null, cells: (item.cells || []).map(Order3Notes.cellRecord) }))
+      intents: game.intents.map(item => ({ slot: item.slot, instanceId: item.instanceId, id: item.id, actorId: item.actorId, targetId: item.targetId ?? null, cells: (item.cells || []).map(Order3Notes.cellRecord) })),
+      enemyRngCalls: game.enemyRng.calls,
+      enemyHand: game.enemyHand.map(card => ({ instanceId: card.instanceId, cardId: card.cardId })),
+      enemyDeckOrder: game.enemyDeck.map(card => card.instanceId),
+      enemyDiscardOrder: game.enemyDiscard.map(card => card.instanceId)
     }
   };
 }
@@ -207,7 +239,7 @@ function playlogTurnStart() {
 function playlogTurnResult(forecast) {
   return {
     turn: game.turn,
-    events: forecast.events.map((event, index) => ({ key: event.key, kind: event.kind, speed: event.speed,
+    events: forecast.events.map((event, index) => ({ key: event.key, kind: event.kind, slot: event.slot,
       status: forecast.snapshots[index].outcome.status, reason: forecast.snapshots[index].outcome.reason || "" })),
     units: game.units.map(Order3Notes.unitRecord),
     hostileRunes: game.hostileRunes.map(Order3Notes.cellRecord),
@@ -215,7 +247,9 @@ function playlogTurnResult(forecast) {
     battle: battleResult(),
     // Piles as endTurnCleanup leaves them (hand, then committed cards, onto the discard), also when the battle ends first.
     deckOrder: game.deck.map(card => card.instanceId),
-    discardOrder: [...game.discard, ...game.hand, ...game.queue.map(action => action.instance)].map(card => card.instanceId)
+    discardOrder: [...game.discard, ...game.hand, ...game.queue.map(action => action.instance)].map(card => card.instanceId),
+    enemyDeckOrder: game.enemyDeck.map(card => card.instanceId),
+    enemyDiscardOrder: [...game.enemyDiscard, ...game.enemyHand].map(card => card.instanceId)
   };
 }
 
@@ -236,6 +270,7 @@ function clearMovementReading(newPlan = false, newBattle = false) {
   movementUI.open.clear();
   movementUI.returnTo = null;
   enemyTrace = null;
+  game.enemyCardFocus = null;
   if (newPlan || newBattle) queueReturnMessage = "";
   interposePreviewTargetId = null;
   interposePreviewMessage = "";
@@ -267,6 +302,9 @@ const el = {
   selectionMore: document.querySelector("#selection-more"),
   deckCount: document.querySelector("#deck-count"),
   discardCount: document.querySelector("#discard-count"),
+  enemyDeckCount: document.querySelector("#enemy-deck-count"),
+  enemyDiscardCount: document.querySelector("#enemy-discard-count"),
+  enemyCardDetail: document.querySelector("#enemy-card-detail"),
   actorStrip: document.querySelector("#actor-strip"),
   actorOptions: document.querySelector("#actor-options"),
   actorStatus: document.querySelector("#actor-status"),
@@ -307,13 +345,13 @@ const el = {
 // Character-first navigation is display state; it never enters game, the queue, or the resolver.
 let activeActorId = null;
 let actorChoice = null; // null, technique, alt-pick, or alt-target
-function clearActorView() { activeActorId = null; actorChoice = null; }
+function clearActorView() { activeActorId = null; actorChoice = null; game.enemyCardFocus = null; }
 
 // Optional, short-lived reading state; no combat action observes it.
 const turnGuide = { active: false, step: 0, announcedStep: null };
 const turnGuideSteps = [
   { title: "目的と勝敗", target: "#battlefield-heading", copy: () => `敵を全員倒せば勝利、味方が全員倒れると敗北です。現在、敵${living("enemy").length}体・味方${living("player").length}人が生存。1ターンで勝つ必要はありません。盤面の駒と実HPを見てください。` },
-  { title: "敵の予告", target: "#enemy-orders-title", copy: () => "敵の命令①②③は計画前に確定しています。味方①→敵①→味方②→敵②→味方③→敵③の順に解決します。行動予測の敵の枠を開くと、その敵の移動と対象を盤面で追えます。" },
+  { title: "敵の手札", target: "#enemy-orders-title", copy: () => "上の敵の手札5枚のうち、①②③の付いた札が今ターンの敵の命令です（計画前に確定）。味方①→敵①→味方②→敵②→味方③→敵③の順に解決します。番号の無い札は使われません。札を押すと、選ばれた理由を右の列で読めます。" },
   { title: "味方と手札", target: "#actor-picker-title", copy: () => "盤面の味方か、右の列の味方一覧で一人を選ぶと、手札にあるその味方の固有技をこの列に表示します。下の手札から直接選ぶことや、ALT移動もできます。" },
   { title: "命令と予測", target: "#order-queue-title", copy: () => `カードと対象を選んで登録します。現在${game.queue.length}件／最大3件。1件から実行でき、同じ味方へ複数命令も可能です。左の行動予測を見て、1手戻して組み直せます。` },
   { title: "明示して実行", target: "#execute-guide-target", copy: () => game.queue.length
@@ -374,10 +412,11 @@ function makeUnit(id, name, icon, side, hp, x, y, role) {
   };
 }
 
-function resetGame(seed = Order3Notes.chooseSeed(globalThis)) {
-  // The seed is fixed before any shuffle; replay passes a logged seed.
+function resetGame(seed = Order3Notes.chooseSeed(globalThis), enemySeed = null) {
+  // The seeds are fixed before any shuffle; replay passes the logged seeds.
   game.rng = Order3Notes.createRng(seed);
-  recordPlaylog("battleStart", () => ({ seed: game.rng.seed, gameVersion: GAME_VERSION, width: globalThis.innerWidth || 0 }), true);
+  game.enemyRng = Order3Notes.createRng(Number.isInteger(enemySeed) ? enemySeed : chooseEnemySeed(game.rng.seed));
+  recordPlaylog("battleStart", () => ({ seed: game.rng.seed, enemySeed: game.enemyRng.seed, gameVersion: GAME_VERSION, width: globalThis.innerWidth || 0 }), true);
   closeTurnGuide(false);
   clearMovementReading(true, true);
   clearActorView();
@@ -400,8 +439,14 @@ function resetGame(seed = Order3Notes.chooseSeed(globalThis)) {
   game.lastResolvedState = null;
   game.deck = shuffle(Object.keys(cardDefs).map(cardId => makeCardInstance(cardId)));
   drawToFive();
-  game.intents = buildEnemyIntents();
-  addLog("作戦開始。敵の行動はすべて予告されます。", true);
+  game.enemyInstanceCounter = 0;
+  game.enemyDeck = shuffleWith(makeEnemyDeck(), game.enemyRng);
+  game.enemyDiscard = [];
+  game.enemyHand = [];
+  game.enemyCardFocus = null;
+  drawEnemyToFive();
+  commitEnemyPlan();
+  addLog("作戦開始。敵の手札と命令はすべて公開されます。", true);
   render();
   recordPlaylog("turnStart", playlogTurnStart);
 }
@@ -411,13 +456,129 @@ function makeCardInstance(cardId) {
   return { cardId, instanceId: `card-${game.instanceCounter}` };
 }
 
+// Test-only override ORDER3_TEST_ENEMY_SEED; otherwise derived from the battle seed.
+function chooseEnemySeed(seed) {
+  const override = globalThis.ORDER3_TEST_ENEMY_SEED;
+  if (Number.isInteger(override) && override >= 0 && override <= 0xFFFFFFFF) return override;
+  return (seed ^ 0x9E3779B9) >>> 0;
+}
+
 function shuffle(items) {
+  return shuffleWith(items, game.rng);
+}
+
+function shuffleWith(items, rng) {
   const result = [...items];
   for (let i = result.length - 1; i > 0; i -= 1) {
-    const j = Math.floor(game.rng.next() * (i + 1));
+    const j = Math.floor(rng.next() * (i + 1));
     [result[i], result[j]] = [result[j], result[i]];
   }
   return result;
+}
+
+// enemy-card-1..15 in card number order, with its own counter so the ally card ids stay card-1..12.
+function makeEnemyDeck() {
+  return ENEMY_CARD_DEFS.flatMap(def => Array.from({ length: def.copies }, () => {
+    game.enemyInstanceCounter += 1;
+    return { cardId: def.id, instanceId: `enemy-card-${game.enemyInstanceCounter}` };
+  }));
+}
+
+function drawEnemyToFive() {
+  while (game.enemyHand.length < ENEMY_HAND_SIZE) {
+    if (!game.enemyDeck.length) {
+      if (!game.enemyDiscard.length) break;
+      game.enemyDeck = shuffleWith(game.enemyDiscard, game.enemyRng);
+      game.enemyDiscard = [];
+    }
+    game.enemyHand.push(game.enemyDeck.pop());
+  }
+}
+
+// One card's evaluation on the turn-start state. Targets follow the ACT27 rule (nearestUnit); nothing here reads the
+// player's hand, plan or forecast.
+function evaluateEnemyCard(state, card) {
+  const def = ENEMY_CARD_BY_ID[card.cardId];
+  const actor = simGetUnit(state, def.ownerId);
+  const row = { instanceId: card.instanceId, cardId: card.cardId, actorId: def.ownerId, selectable: false, reason: "", score: null, tier: "",
+    targetId: null, targetKind: null, cells: [], slot: null };
+  if (!actor || actor.hp <= 0) return { ...row, reason: "撃破済み" };
+  const players = simLiving(state, "player");
+  if (!players.length) return { ...row, reason: "対象がいない" };
+  const nearest = nearestUnit(actor, players);
+  const scored = (score, tier) => ({ ...row, selectable: score > 0, score, tier, reason: score > 0 ? "" : "点がない" });
+  if (def.target === "nearest-opponent") {
+    row.targetId = nearest.id;
+    if (def.id === "drain") {
+      const score = 20 + Math.min(def.heal, actor.maxHp - actor.hp) * 5;
+      return nearest.hp <= def.amount ? scored(score + 100, "撃破できる攻撃") : scored(score, "届く攻撃");
+    }
+    const length = isOrthogonallyAdjacent(actor, nearest) ? 0 : simPathToAdjacent(state, actor, nearest).length;
+    if (!isOrthogonallyAdjacent(actor, nearest) && !length) return { ...row, reason: "近づけない" };
+    if (length > def.steps) return scored(5 + Math.min(def.steps, length), "届かない接近");
+    return def.amount >= nearest.hp ? scored(def.amount * 10 + 100, "撃破できる攻撃") : scored(def.amount * 10, "届く攻撃");
+  }
+  if (def.target === "preferred-friend-or-self" || def.target === "self") {
+    const preferred = def.preferredId && simGetUnit(state, def.preferredId);
+    const guarded = preferred && preferred.hp > 0 ? preferred : actor;
+    row.targetId = guarded.id;
+    return players.some(unit => distance(unit, guarded) <= 5) ? scored(def.armor * 5, "狙われる守り") : scored(2, "狙われない守り");
+  }
+  if (def.target === "cross-cells-on-nearest-opponent") {
+    row.targetId = nearest.id;
+    row.targetKind = "cells";
+    row.cells = [nearest, ...neighbors(nearest)].filter(cell => !isWall(cell.x, cell.y)).map(cell => ({ x: cell.x, y: cell.y }));
+    if (state.hostileRunes.length) return { ...row, reason: "災印が残っている" };
+    return scored(15 * players.filter(unit => row.cells.some(cell => cell.x === unit.x && cell.y === unit.y)).length, "災印を刻む");
+  }
+  // rune-cells: detonate
+  row.targetKind = "cells";
+  row.cells = state.hostileRunes.map(cell => ({ x: cell.x, y: cell.y }));
+  if (!state.hostileRunes.length) return { ...row, reason: "災印が無い" };
+  const victims = players.filter(unit => state.hostileRunes.some(cell => cell.x === unit.x && cell.y === unit.y));
+  if (!victims.length) return scored(3, "災印の片付け");
+  return victims.some(unit => unit.hp <= def.amount) ? scored(40 * victims.length + 100, "撃破できる起爆") : scored(40 * victims.length, "災印起爆");
+}
+
+// Called only by resetGame and completeResolvedTurn, after the draws: picks up to three enemy orders from the public hand,
+// numbers them and freezes the result. Planning, previews, Help and the screen never call it.
+function commitEnemyPlan() {
+  const state = cloneCombatState(game);
+  const rows = game.enemyHand.map(card => evaluateEnemyCard(state, card));
+  const limit = simLiving(state, "enemy").length;
+  const ranked = rows.map((row, index) => ({ row, index })).filter(item => item.row.selectable)
+    .sort((a, b) => b.row.score - a.row.score || ENEMY_CARD_BY_ID[a.row.cardId].number - ENEMY_CARD_BY_ID[b.row.cardId].number || a.index - b.index);
+  const chosen = [];
+  const names = new Set();
+  const perActor = {};
+  for (const { row } of ranked) {
+    if (names.has(row.cardId)) row.reason = "同じ名前を使用";
+    else if ((perActor[row.actorId] || 0) >= ENEMY_ACTOR_LIMIT) row.reason = `この敵は${ENEMY_ACTOR_LIMIT}枚使用`;
+    else if (chosen.length >= limit) row.reason = limit >= 3 ? "他の札を優先" : `命令数の上限（生存${limit}体）`;
+    else {
+      chosen.push(row);
+      names.add(row.cardId);
+      perActor[row.actorId] = (perActor[row.actorId] || 0) + 1;
+    }
+  }
+  // Guard, attack, rune; then score; then adoption order. Fewer orders fill from 敵③ backwards.
+  const ordered = chosen.map((row, adopted) => ({ row, adopted }))
+    .sort((a, b) => ENEMY_CATEGORY_ORDER[ENEMY_CARD_BY_ID[a.row.cardId].category] - ENEMY_CATEGORY_ORDER[ENEMY_CARD_BY_ID[b.row.cardId].category]
+      || b.row.score - a.row.score || a.adopted - b.adopted);
+  ordered.forEach(({ row }, index) => { row.slot = 3 - ordered.length + index + 1; });
+  const freezeRow = row => Object.freeze({ ...row, cells: Object.freeze(row.cells.map(cell => Object.freeze({ ...cell }))) });
+  game.enemyPlan = Object.freeze(rows.map(freezeRow));
+  game.intents = Object.freeze(ordered.map(({ row }) => enemyIntentFromRow(row)));
+}
+
+function enemyIntentFromRow(row) {
+  const def = ENEMY_CARD_BY_ID[row.cardId];
+  return Object.freeze({
+    slot: row.slot, instanceId: row.instanceId, id: row.cardId, actorId: row.actorId, name: def.name, targetId: row.targetId,
+    ...(row.targetKind ? { targetKind: row.targetKind } : {}),
+    cells: Object.freeze(row.cells.map(cell => Object.freeze({ x: cell.x, y: cell.y }))),
+    description: effectCatalog[row.cardId].short, category: def.category, score: row.score, tier: row.tier
+  });
 }
 
 function drawToFive() {
@@ -580,82 +741,10 @@ function nearestUnit(source, candidates) {
     || a.hp - b.hp || roster.indexOf(a.id) - roster.indexOf(b.id))[0];
 }
 
-function buildEnemyIntents() {
-  const intents = [];
-  const players = living("player");
-  if (!players.length) return intents;
-
-  const pursuer = getUnit("pursuer");
-  if (pursuer.hp > 0) {
-    const phase = (game.turn - 1) % 3;
-    if (phase === 0) {
-      const target = nearestUnit(pursuer, players);
-      intents.push(intent(pursuer, "stalk", "忍び寄る", target,
-        effectCatalog.stalk.short));
-    } else if (phase === 1) {
-      const target = nearestUnit(pursuer, players);
-      intents.push(intent(pursuer, "pounce", "飛びかかり", target,
-        effectCatalog.pounce.short));
-    } else {
-      const target = nearestUnit(pursuer, players);
-      intents.push(intent(pursuer, "recover", "息を整える", target,
-        effectCatalog.recover.short));
-    }
-  }
-
-  const bastion = getUnit("bastion");
-  if (bastion.hp > 0) {
-    const phase = (game.turn - 1) % 3;
-    if (phase === 0) {
-      const target = getUnit("cantor").hp > 0 ? getUnit("cantor") : bastion;
-      intents.push(intent(bastion, "cover", "装甲支援", target,
-        effectCatalog.cover.short));
-    } else if (phase === 1) {
-      const target = nearestUnit(bastion, players);
-      intents.push(intent(bastion, "shield_drive", "盾の圧力", target,
-        effectCatalog.shield_drive.short));
-    } else {
-      intents.push(intent(bastion, "brace", "構え", bastion,
-        effectCatalog.brace.short));
-    }
-  }
-
-  const cantor = getUnit("cantor");
-  if (cantor.hp > 0 || ((game.turn - 1) % 3 === 1 && game.hostileRunes.length)) {
-    const phase = (game.turn - 1) % 3;
-    if (phase === 0) {
-      const target = nearestUnit(cantor, players);
-      const cells = [target, ...neighbors(target)].filter(cell => !isWall(cell.x, cell.y));
-      const result = intent(cantor, "inscribe", "災印を刻む", target,
-        effectCatalog.inscribe.short, cells, { targetKind: "cells" });
-      intents.push(result);
-    } else if (phase === 1) {
-      intents.push(intent(cantor, "detonate", "災印起爆", null,
-        effectCatalog.detonate.short, [...game.hostileRunes],
-        { targetKind: "cells" }));
-    } else {
-      const target = nearestUnit(cantor, players);
-      intents.push(intent(cantor, "drain", "生命吸収", target,
-        effectCatalog.drain.short));
-    }
-  }
-  // Enemy order ①②③; a defeated enemy leaves its number empty and later numbers do not move up.
-  return intents.sort((a, b) => a.slot - b.slot);
-}
-
-function intent(actor, id, name, target, description, cells = [], options = {}) {
-  return { actorId: actor.id, id, name, speed: UNIFORM_SPEED, slot: ENEMY_SLOT[id], targetId: target?.id || null, description, cells, ...options };
-}
-
 function allySlotLabel(number) { return `味方${SLOT_MARK[number - 1] || number}`; }
 function enemySlotLabel(number) { return `敵${SLOT_MARK[number - 1] || number}`; }
 function eventSlotLabel(event) { return event.kind === "enemy" ? enemySlotLabel(event.slot) : allySlotLabel(event.slot); }
 function eventCauseLabel(event) { return `${eventSlotLabel(event)}・${timelineEventView(event).action}`; }
-
-// The enemy that owns an order number this turn, also when it is defeated and its number is empty.
-function enemySlotOwner(slot, turn = game.turn) {
-  return Object.keys(ENEMY_CYCLE).find(actorId => ENEMY_SLOT[ENEMY_CYCLE[actorId][(turn - 1) % 3]] === slot) || null;
-}
 
 function selectCard(instanceId, fromActor = false, moveActorId = null) {
   if (game.phase !== "planning" || game.queue.length >= 3) return;
@@ -700,7 +789,7 @@ function provisionalActionForSelection(providedSelection = null) {
   if (selection.mode === "move") {
     return {
       instance: card, cardId: card.cardId, mode: "move", actorId: selection.moveUnitId,
-      target: null, speed: UNIFORM_SPEED, label: `${selection.moveUnitId ? getUnit(selection.moveUnitId)?.name : "味方"}：移動`,
+      target: null, label: `${selection.moveUnitId ? getUnit(selection.moveUnitId)?.name : "味方"}：移動`,
       provisional: true
     };
   }
@@ -708,12 +797,12 @@ function provisionalActionForSelection(providedSelection = null) {
     const legacyDef = getLegacy(def.ownerId);
     return {
       instance: card, cardId: card.cardId, mode: "legacy", actorId: def.ownerId,
-      targetId: null, speed: UNIFORM_SPEED, label: legacyDef.name, provisional: true
+      targetId: null, label: legacyDef.name, provisional: true
     };
   }
   return {
     instance: card, cardId: card.cardId, mode: "technique", actorId: def.ownerId,
-    targetId: null, target: null, speed: UNIFORM_SPEED, label: `${liveOwner.name}：${def.name}`,
+    targetId: null, target: null, label: `${liveOwner.name}：${def.name}`,
     provisional: true
   };
 }
@@ -809,7 +898,7 @@ function interposeCandidateForecasts() {
     if (!target || target.side !== "player" || target.id === "rook") return null;
     const action = {
       instance: selection.card, cardId: "interpose", mode: "technique", actorId: "rook",
-      targetId: target.id, target: { x: cell.x, y: cell.y }, speed: UNIFORM_SPEED,
+      targetId: target.id, target: { x: cell.x, y: cell.y },
       label: `${getUnit("rook").name}：${cardDefs.interpose.name}`
     };
     const forecast = predictTimeline(buildResolutionEvents([...game.queue, action]));
@@ -928,6 +1017,7 @@ function chooseActor(unitId, focusSource = "list") {
   if (game.phase !== "planning" || !unit || unit.side !== "player" || unit.hp <= 0) return;
   if (enemyTrace) { enemyTrace = null; game.previewIndex = null; }
   if (selectedCard()) clearSelection();
+  game.enemyCardFocus = null;
   activeActorId = unitId;
   actorChoice = null;
   render();
@@ -1091,20 +1181,20 @@ function handleCellClick(x, y) {
   if (game.mode === "move") {
     action = {
       instance: card, cardId: card.cardId, mode: "move", actorId: game.moveUnitId,
-      target: { x, y }, speed: UNIFORM_SPEED, label: `${getUnit(game.moveUnitId).name}：移動`
+      target: { x, y }, label: `${getUnit(game.moveUnitId).name}：移動`
     };
   } else if (!owner || owner.hp <= 0) {
     const target = simUnitAt(selectionState, x, y);
     const legacy = getLegacy(def.ownerId);
     action = {
       instance: card, cardId: card.cardId, mode: "legacy", actorId: def.ownerId,
-      targetId: target?.id, speed: UNIFORM_SPEED, label: legacy.name
+      targetId: target?.id, label: legacy.name
     };
   } else {
     const targetUnit = simUnitAt(selectionState, x, y);
     action = {
       instance: card, cardId: card.cardId, mode: "technique", actorId: def.ownerId,
-      targetId: targetUnit?.id || null, target: { x, y }, speed: UNIFORM_SPEED,
+      targetId: targetUnit?.id || null, target: { x, y },
       label: `${owner.name}：${def.name}`
     };
   }
@@ -1196,7 +1286,6 @@ function buildResolutionEvents(queue = game.queue, intents = game.intents) {
   return [
     ...queue.map((action, order) => ({
       kind: "player",
-      speed: UNIFORM_SPEED,
       order,
       slot: order + 1,
       rank: order * 2,
@@ -1204,14 +1293,14 @@ function buildResolutionEvents(queue = game.queue, intents = game.intents) {
       payload: action
     })),
     ...intents.map((enemyIntent, order) => {
-      const slot = enemyIntent.slot ?? ENEMY_SLOT[enemyIntent.id] ?? order + 1;
+      const slot = enemyIntent.slot ?? order + 1;
       return {
         kind: "enemy",
-        speed: UNIFORM_SPEED,
         order,
         slot,
         rank: (slot - 1) * 2 + 1,
-        key: `enemy-${enemyIntent.actorId}-${enemyIntent.id}`,
+        // Keyed by card instance: one enemy may hold two orders in a turn.
+        key: `enemy-${enemyIntent.instanceId}`,
         payload: enemyIntent
       };
     })
@@ -1777,8 +1866,9 @@ function completeResolvedTurn(forecast) {
   game.timelineCursor = -1;
   game.previewIndex = null;
   game.activeForecast = null;
-  game.intents = buildEnemyIntents();
   drawToFive();
+  drawEnemyToFive();
+  commitEnemyPlan();
   game.phase = "planning";
   addLog(`TURN ${String(game.turn).padStart(2, "0")}：新しい予告を確認。`, true);
   render();
@@ -1801,11 +1891,11 @@ function resolveStandaloneEvent(event) {
 }
 
 async function resolvePlayerAction(action) {
-  return resolveStandaloneEvent({ kind: "player", key: `player-${action.instance.instanceId}`, speed: UNIFORM_SPEED, slot: 1, payload: action });
+  return resolveStandaloneEvent({ kind: "player", key: `player-${action.instance.instanceId}`, slot: 1, payload: action });
 }
 
 async function resolveEnemyIntent(enemyIntent) {
-  return resolveStandaloneEvent({ kind: "enemy", key: `enemy-${enemyIntent.actorId}-${enemyIntent.id}`, speed: UNIFORM_SPEED, slot: enemyIntent.slot ?? ENEMY_SLOT[enemyIntent.id], payload: enemyIntent });
+  return resolveStandaloneEvent({ kind: "enemy", key: `enemy-${enemyIntent.instanceId}`, slot: enemyIntent.slot ?? 1, payload: enemyIntent });
 }
 
 function flash(unitId) {
@@ -1831,6 +1921,11 @@ function endTurnCleanup() {
     unit.marked = false;
   }
   game.emberRunes = [];
+  // ACT30: the whole enemy hand (chosen, unused and defeated enemies' cards) goes to the enemy discard in hand order.
+  for (const card of game.enemyHand) game.enemyDiscard.push(card);
+  game.enemyHand = [];
+  // A rune outlives its turn until a detonation, but not a defeated Cantor, whose cards can no longer be chosen.
+  if ((getUnit("cantor")?.hp ?? 0) <= 0) game.hostileRunes = [];
 }
 
 function battleResult() {
@@ -1851,7 +1946,7 @@ function finishBattle(result) {
   } else {
     showModal("部隊壊滅。", `
       <p>敵の予告に対し、移動・防御・妨害のどこへ命令を使うかが鍵です。</p>
-      <p>災印は設置の次ターンに起爆します。起爆マスから離れる、装甲で被害を抑える、起爆前に詠唱師を倒す方法を試してください。</p>
+      <p>災印は、災印起爆の札が敵の手札から選ばれたターンに起爆します。敵の手札の①②③と、起爆マスから離れる・装甲で抑える・起爆前に詠唱師を倒す方法を試してください。</p>
     `, "再戦する", "restart", "defeat");
   }
 }
@@ -2338,40 +2433,118 @@ function renderHand() {
   });
 }
 
-// Always three enemy order slots ①②③, fixed before planning. An empty slot names the defeated enemy that owns it.
+// ACT30 display helpers for the public enemy hand. They read the frozen enemyPlan only.
+function enemyCardTargetText(row) {
+  if (row.targetKind === "cells") return row.cells.length ? `→ マス${row.cells.length}つ` : "→ マスなし";
+  if (!row.targetId || row.targetId === row.actorId) return "→ 自身";
+  return `→ ${getUnit(row.targetId)?.name || row.targetId}`;
+}
+
+// The effect sentence with the fixed target named (read from the enemy side: 最寄りの味方 becomes the ally's name).
+function enemyCardEffectText(row) {
+  const short = effectCatalog[row.cardId].short;
+  const target = row.targetId && row.targetId !== row.actorId && getUnit(row.targetId);
+  return target && target.side === "player" ? short.replace("最寄りの味方", target.name) : short;
+}
+
+function enemyRowEvaluationText(row) {
+  return Number.isFinite(row?.score) ? `${row.tier}（${row.score}点）` : "評価なし";
+}
+
+// The enemy event the forecast selection or the enemy trace points at (planning only).
+function linkedEnemyEventKey() {
+  if (game.phase !== "planning" || selectedCard() || !Number.isInteger(game.previewIndex)) return null;
+  const forecast = currentForecast() || predictTimeline(buildResolutionEvents());
+  const event = forecast.events[game.previewIndex];
+  return event?.kind === "enemy" ? event.key : null;
+}
+
+function focusedEnemyRow() {
+  if (game.phase !== "planning" || !game.enemyCardFocus) return null;
+  return game.enemyPlan.find(row => row.instanceId === game.enemyCardFocus && !row.slot) || null;
+}
+
+// Top center: the five public enemy cards, chosen orders 敵①→②→③ first, then the unused cards in hand order.
 function renderIntents() {
   el.intents.innerHTML = "";
-  const forecastState = displayTimelineState();
   const resolvingEvent = game.phase === "resolving" ? game.activeForecast?.events[game.timelineCursor] : null;
-  for (let slot = 1; slot <= 3; slot += 1) {
-    const item = game.intents.find(entry => (entry.slot ?? ENEMY_SLOT[entry.id]) === slot);
-    const card = document.createElement("article");
-    card.dataset.enemySlot = String(slot);
-    const badge = `<span class="enemy-slot-badge">${enemySlotLabel(slot)}</span>`;
-    if (!item) {
-      const owner = getUnit(enemySlotOwner(slot));
-      card.className = "intent-card empty";
-      card.innerHTML = `${badge}<p class="intent-empty">なし${owner ? `（${owner.name}は撃破済み）` : ""}</p>`;
-      el.intents.appendChild(card);
-      continue;
-    }
-    const actor = getUnit(item.actorId);
-    const target = item.targetId ? getUnit(item.targetId) : null;
-    const shownActor = forecastState?.units.find(unit => unit.id === actor.id) || actor;
-    const targetText = item.targetKind === "cells"
-      ? (item.cells?.length ? `→ マス${item.cells.length}つ` : "→ マスなし")
-      : target && target.id !== actor.id ? `→ ${target.name}` : "→ 自身";
-    const current = resolvingEvent?.kind === "enemy" && resolvingEvent.key === `enemy-${item.actorId}-${item.id}`;
-    card.className = `intent-card${current ? " current" : ""}`;
-    if (current) card.setAttribute("aria-current", "step");
-    // Effect details open from the enemy cell in the forecast column; the fixed top row never grows.
-    card.innerHTML = `
-      <h3>${badge}<span class="intent-name">${actor.name}｜${item.name}</span><b class="intent-hp${shownActor.hp !== actor.hp ? " changed" : ""}"><span class="intent-hp-label">HP </span>${shownActor.hp !== actor.hp ? `${actor.hp}→${shownActor.hp}` : `${actor.hp}/${actor.maxHp}`}</b></h3>
-      <p class="intent-effect">${item.description}</p>
-      <p class="intent-target">${targetText}</p>
+  const linkedKey = linkedEnemyEventKey();
+  const rows = [...game.enemyPlan.filter(row => row.slot).sort((a, b) => a.slot - b.slot), ...game.enemyPlan.filter(row => !row.slot)];
+  el.intents.style.setProperty("--enemy-card-count", String(Math.max(1, rows.length)));
+  for (const row of rows) {
+    const def = ENEMY_CARD_BY_ID[row.cardId];
+    const actor = getUnit(row.actorId);
+    const key = `enemy-${row.instanceId}`;
+    const chosen = Boolean(row.slot);
+    const defeated = !chosen && row.reason === "撃破済み";
+    const current = chosen && resolvingEvent?.kind === "enemy" && resolvingEvent.key === key;
+    const linked = chosen && linkedKey === key;
+    const pressed = chosen ? linked : game.enemyCardFocus === row.instanceId && game.phase === "planning";
+    const item = document.createElement("li");
+    item.className = "enemy-card-slot";
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `enemy-card ${chosen ? "chosen" : defeated ? "defeated" : "unused"}${current ? " current" : ""}${linked ? " linked" : ""}`;
+    button.dataset.enemyInstance = row.instanceId;
+    button.dataset.enemyActor = row.actorId;
+    if (chosen) button.dataset.enemySlot = String(row.slot);
+    button.setAttribute("aria-pressed", String(pressed));
+    if (current) button.setAttribute("aria-current", "step");
+    const mark = `<span class="enemy-card-mark">${ENEMY_MARK[row.actorId]}</span>`;
+    const head = chosen
+      ? `<span class="enemy-slot-badge">${SLOT_MARK[row.slot - 1]}</span>${mark}`
+      : `<span class="enemy-card-chip"><span class="chip-long">${defeated ? "撃破済み" : "未使用"}</span><span class="chip-short">${defeated ? "撃" : "未"}</span></span>${mark}`;
+    button.innerHTML = `
+      <span class="enemy-card-actor" aria-hidden="true">${actor.name}</span>
+      <span class="enemy-card-head" aria-hidden="true">${head}<span class="enemy-card-name">${def.name}</span></span>
+      ${defeated ? "" : `<span class="enemy-card-face" aria-hidden="true">${def.face}</span>`}
+      <span class="${chosen ? "enemy-card-target" : "enemy-card-reason"}" aria-hidden="true">${chosen ? enemyCardTargetText(row) : defeated ? "使えません" : escapeEffectText(row.reason)}</span>
     `;
-    el.intents.appendChild(card);
+    button.setAttribute("aria-label", chosen
+      ? `${enemySlotLabel(row.slot)} ${actor.name} ${def.name}、${enemyCardEffectText(row)}選ばれた理由 ${row.tier} ${row.score}点。`
+      : defeated ? `撃破済み ${actor.name} ${def.name}、使えません。`
+        : `未使用 ${actor.name} ${def.name}、${enemyCardEffectText(row)}理由 ${row.reason}。`);
+    button.addEventListener("click", () => {
+      if (game.phase !== "planning") return;
+      clearSelection();
+      actorChoice = null;
+      if (chosen) {
+        // Same as the enemy cell of the forecast: the event view with the enemy trace.
+        const baseForecast = currentForecast() || predictTimeline(buildResolutionEvents());
+        const baseIndex = baseForecast.events.findIndex(event => event.key === key);
+        enemyTrace = { key, token: movementPlanToken() };
+        game.previewIndex = baseIndex >= 0 ? baseIndex : null;
+      } else {
+        game.enemyCardFocus = row.instanceId;
+      }
+      render();
+      el.intents.querySelector(`[data-enemy-instance="${row.instanceId}"]`)?.focus({ preventScroll: true });
+    });
+    item.appendChild(button);
+    el.intents.appendChild(item);
   }
+}
+
+// Right column enemy-card view: an unused or defeated enemy's card, with the reason and the evaluation.
+function renderEnemyCardDetail(view) {
+  const row = view === "enemy-card" ? focusedEnemyRow() : null;
+  if (!row) {
+    if (el.enemyCardDetail.innerHTML) el.enemyCardDetail.innerHTML = "";
+    el.enemyCardDetail.hidden = true;
+    return;
+  }
+  const def = ENEMY_CARD_BY_ID[row.cardId];
+  const actor = getUnit(row.actorId);
+  const defeated = row.reason === "撃破済み";
+  const html = `
+    <p class="enemy-card-detail-status">${defeated ? "撃破済みの敵の札（使えません）" : `未使用：${escapeEffectText(row.reason)}`}</p>
+    <p class="enemy-card-detail-meta">${ENEMY_CATEGORY_LABEL[def.category]}・この札は敵の札15枚中${def.copies}枚</p>
+    <p>${escapeEffectText(enemyCardEffectText(row))}</p>
+    ${effectCatalog[row.cardId].detail.map(text => `<p>${escapeEffectText(text)}</p>`).join("")}
+    <p class="enemy-card-detail-score">評価：${escapeEffectText(enemyRowEvaluationText(row))}</p>
+    <p>${actor.name} HP ${actor.hp}/${actor.maxHp}</p>`;
+  if (el.enemyCardDetail.innerHTML !== html) el.enemyCardDetail.innerHTML = html;
+  el.enemyCardDetail.hidden = false;
 }
 
 function renderSquad() {
@@ -2490,13 +2663,23 @@ function renderEffectDetails(id, location, indexEntry = false) {
   if (!effect) return "";
   const disclosure = `${location}-${id}`;
   return `<details class="effect-details" data-effect-id="${id}" data-disclosure="${disclosure}"${openEffectDisclosures.has(disclosure) ? " open" : ""}>
-    <summary>${indexEntry ? (effect.group === "enemy" ? `${effect.name} · ${enemySlotLabel(ENEMY_SLOT[id])}` : effect.name) : `効果詳細：${effect.name}`}</summary>
+    <summary>${indexEntry ? (effect.group === "enemy" ? enemyCardSummary(id) : effect.name) : `効果詳細：${effect.name}`}</summary>
     <div class="effect-rules">
       <h4>効果の規則</h4><p>${effect.short}</p>
       ${effect.detail.map(text => `<p>${text}</p>`).join("")}
       <div class="related-rules"><h4>関連する共通ルール</h4>${effect.rules.map(renderRuleDetails).join("")}${id === "move" ? "" : renderEffectDetails("move", disclosure, true)}</div>
     </div>
   </details>`;
+}
+
+// Help index line of an enemy card: name, owner, category, copies in the enemy deck.
+function enemyCardSummary(id) {
+  const def = ENEMY_CARD_BY_ID[id];
+  return `${def.name} · ${ownerNameOfEnemy(def.ownerId)} · ${ENEMY_CATEGORY_LABEL[def.category]} · ${def.copies}枚`;
+}
+
+function ownerNameOfEnemy(actorId) {
+  return getUnit(actorId)?.name || { pursuer: "追跡獣", bastion: "城壁兵", cantor: "詠唱師" }[actorId];
 }
 
 document.addEventListener("toggle", event => {
@@ -2564,7 +2747,9 @@ function renderTimeline() {
     const effectText = effectCatalog[effectIdForEvent(event)]?.short || event.payload.description || "";
     const resultLabel = timelineResultLabel(provisional, outcome, selection, index);
     const orderLabel = eventSlotLabel(event);
-    step.className = `timeline-step ${event.kind}${provisional ? " provisional" : ""}${isDone ? " done" : ""}${isCurrent ? " current" : ""}${isSelected ? " selected" : ""}${cancelled ? " cancelled" : ""}`;
+    // ACT30: a selected enemy cell and its public enemy card on top share the .linked mark.
+    const linked = event.kind === "enemy" && game.phase === "planning" && !selection && game.previewIndex === index;
+    step.className = `timeline-step ${event.kind}${provisional ? " provisional" : ""}${isDone ? " done" : ""}${isCurrent ? " current" : ""}${isSelected ? " selected" : ""}${linked ? " linked" : ""}${cancelled ? " cancelled" : ""}`;
     step.dataset.eventKey = event.key;
     step.setAttribute("aria-label", [
       orderLabel,
@@ -2776,6 +2961,7 @@ function renderTimelineDetail(selection, forecast, events) {
   el.timelineDetail.innerHTML = `
     <div class="timeline-detail-title" id="timeline-detail-heading" tabindex="-1"><span>TURN ${String(game.turn).padStart(2, "0")} · ${eventSlotLabel(event)} ${view.name}｜${view.action}</span><b>${outcome ? (game.phase === "planning" ? "現在計画の予測・行動直後" : "実行・行動直後") : "効果説明"}</b></div>
     ${renderMovementReturn(forecast, detailIndex)}
+    ${event.kind === "enemy" && Number.isFinite(event.payload.score) ? `<p class="enemy-choice-reason">選ばれた理由：${escapeEffectText(enemyRowEvaluationText(event.payload))}</p>` : ""}
     ${renderEffectDetails(effectIdForEvent(event), "timeline")}
     <h4 class="prediction-title">この計画の予測結果</h4>
     ${!outcome ? `<p>命令を登録すると予測結果を表示します。${effectIdForEvent(event) === "drain" ? "回復先は実行時に決定します。" : ""}</p>` : ""}
@@ -2902,11 +3088,12 @@ function renderControls() {
   }
 }
 
-// Right column view (display only): card > event > actor > plan. CSS shows each view's parts; hidden attributes still win.
+// Right column view (display only): card > event > enemy-card > actor > plan. CSS shows each view's parts; hidden attributes still win.
 let selectionPanelView = null;
 function selectionView() {
   if (game.phase === "planning" && selectedCard() && selectedDef()) return "card";
   if (game.phase === "resolving" || (game.phase === "planning" && (Number.isInteger(game.previewIndex) || activeEnemyTrace()))) return "event";
+  if (focusedEnemyRow()) return "enemy-card";
   if (game.phase === "planning" && activeActorId && getUnit(activeActorId)?.hp > 0) return "actor";
   return "plan";
 }
@@ -2929,6 +3116,10 @@ function selectionTitleText(view) {
     }
     return "行動予測";
   }
+  if (view === "enemy-card") {
+    const row = focusedEnemyRow();
+    return `${getUnit(row.actorId).name}｜${ENEMY_CARD_BY_ID[row.cardId].name}`;
+  }
   if (view === "actor") {
     const actor = getUnit(activeActorId);
     return `${actor.name} HP ${actor.hp}/${actor.maxHp}`;
@@ -2941,6 +3132,7 @@ function renderSelectionPanel() {
   el.selectionPanel.dataset.view = view;
   const title = selectionTitleText(view);
   if (el.selectionTitle.textContent !== title) el.selectionTitle.textContent = title;
+  renderEnemyCardDetail(view);
   if (selectionPanelView !== view) {
     selectionPanelView = view;
     el.selectionBody.scrollTop = 0;
@@ -2981,6 +3173,8 @@ function renderSelectionStatuses() {
 function renderPiles() {
   el.deckCount.textContent = String(game.deck.length);
   el.discardCount.textContent = String(game.discard.length);
+  el.enemyDeckCount.textContent = String(game.enemyDeck.length);
+  el.enemyDiscardCount.textContent = String(game.enemyDiscard.length);
 }
 
 // 続き cue (display only): while the right column body has content below its visible part, the stage gets data-more,
@@ -3113,6 +3307,12 @@ function showHelp() {
     <p>一時効果は装甲・足止め・目印の3つです。いずれもターン末に消えます。駒の状態を選ぶと詳細を確認できます。</p>
     <p>カード表面は対象・射程・数値を短く表示し、技の「効果詳細」とこのHelpで完全な規則を確認できます。</p>
     <details class="help-section"><summary>距離と移動・命令</summary>${["distance", "targets", "orders"].map(renderRuleDetails).join("")}${renderEffectDetails("move", "help", true)}</details>
+    <details class="help-section enemy-hand-help"><summary>敵の手札と命令の選び方</summary>${["enemyHand", "enemyScore"].map(renderRuleDetails).join("")}
+      <div class="help-table-scroll"><table class="enemy-deck-table"><caption>敵の山札15枚</caption>
+        <thead><tr><th scope="col">敵</th><th scope="col">札</th><th scope="col">種類</th><th scope="col">枚数</th><th scope="col">効果</th></tr></thead>
+        <tbody>${ENEMY_CARD_DEFS.map(def => `<tr><td>${ownerNameOfEnemy(def.ownerId)}</td><th scope="row">${def.name}</th><td>${ENEMY_CATEGORY_LABEL[def.category]}</td><td>${def.copies}</td><td>${effectCatalog[def.id].short}</td></tr>`).join("")}</tbody>
+      </table></div>
+    </details>
     <details class="help-section"><summary>ダメージと装甲</summary>${["damage", "guard"].map(renderRuleDetails).join("")}</details>
     <details class="help-section"><summary>足止め・目印・罠とターン末</summary>${["rooted", "marked", "terrain", "turn", "legacy"].map(renderRuleDetails).join("")}</details>
     <details class="help-section technique-index"><summary>全ての技の説明（敵9・カード12・遺志3）</summary>
@@ -3239,6 +3439,14 @@ document.addEventListener("keydown", event => {
   if (event.key === "Escape" && el.modal.hidden && turnGuide.active && el.guide.contains(document.activeElement)) {
     event.preventDefault();
     closeTurnGuide();
+    return;
+  }
+  if (event.key === "Escape" && el.modal.hidden && game.phase === "planning" && focusedEnemyRow() && !selectedCard()) {
+    event.preventDefault();
+    const returnId = game.enemyCardFocus;
+    game.enemyCardFocus = null;
+    render();
+    el.intents.querySelector(`[data-enemy-instance="${returnId}"]`)?.focus({ preventScroll: true });
     return;
   }
   if (event.key === "Escape" && el.modal.hidden && game.phase === "planning" && activeActorId) {
@@ -3377,17 +3585,17 @@ function replayRebuildQueue(records, handOrder = null) {
     if (mode === "move") {
       const mover = getUnit(record.actorId);
       if (mover?.side !== "player" || !legal(record.target)) return { divergence: { path: `${path}.target`, expected: cells, actual: record.target } };
-      action = { instance: card, cardId: card.cardId, mode, actorId: mover.id, target: { x: record.target.x, y: record.target.y }, speed: UNIFORM_SPEED, label: `${mover.name}：移動` };
+      action = { instance: card, cardId: card.cardId, mode, actorId: mover.id, target: { x: record.target.x, y: record.target.y }, label: `${mover.name}：移動` };
     } else if (mode === "legacy") {
       const target = context && record.targetId ? simGetUnit(context.state, record.targetId) : null;
       if (!target || target.hp <= 0 || !legal(target)) return { divergence: { path: `${path}.targetId`, expected: cells, actual: record.targetId } };
       const legacy = getLegacy(def.ownerId);
-      action = { instance: card, cardId: card.cardId, mode, actorId: def.ownerId, targetId: target.id, speed: UNIFORM_SPEED, label: legacy.name };
+      action = { instance: card, cardId: card.cardId, mode, actorId: def.ownerId, targetId: target.id, label: legacy.name };
     } else {
       if (!legal(record.target)) return { divergence: { path: `${path}.target`, expected: cells, actual: record.target } };
       const target = simUnitAt(context.state, record.target.x, record.target.y);
       action = { instance: card, cardId: card.cardId, mode, actorId: def.ownerId, targetId: target?.id || null,
-        target: { x: record.target.x, y: record.target.y }, speed: UNIFORM_SPEED, label: `${owner.name}：${def.name}` };
+        target: { x: record.target.x, y: record.target.y }, label: `${owner.name}：${def.name}` };
     }
     const difference = Order3Notes.firstDifference(record, Order3Notes.queueRecord(action));
     if (difference) return { divergence: { ...difference, path: `${path}.${difference.path}` } };
@@ -3406,7 +3614,7 @@ function replayView(start, forecast, eventIndex = null) {
     start: start.start,
     handOrder: game.hand.map(card => card.instanceId),
     queue: game.queue.map(Order3Notes.queueRecord),
-    events: forecast ? forecast.events.map(event => ({ key: event.key, kind: event.kind, speed: event.speed })) : [],
+    events: forecast ? forecast.events.map(event => ({ key: event.key, kind: event.kind, slot: event.slot })) : [],
     eventIndex,
     snapshots,
     outcome: Number.isInteger(eventIndex) ? forecast?.snapshots[eventIndex]?.outcome || null : null,
@@ -3461,6 +3669,8 @@ function replayLoggedRun(run, target = null, options = {}) {
   const check = Order3Notes.validateRun(run);
   if (!check.ok) return done("not-replayable", { reason: `invalid run: ${check.errors[0] || "schema"}` });
   if (run.gameVersion !== GAME_VERSION && !options.force) return done("version-mismatch", { reason: `log ${run.gameVersion}, product ${GAME_VERSION}` });
+  // ACT30 replays schema v2 only; an ACT26-29 run (schema v1) needs its own product.
+  if (run.schemaVersion !== 2) return done("not-replayable", { reason: "schema v1 run: replay it with its own product version (--product)" });
   committedTurns = run.turns.filter(turn => turn.commit).length;
   if (!committedTurns) return done("not-replayable", { reason: "no committed turn" });
   const comment = target?.commentId ? run.comments.find(item => item.commentId === target.commentId) : null;
@@ -3473,7 +3683,7 @@ function replayLoggedRun(run, target = null, options = {}) {
 
   playlog.suspended = true;
   try {
-    resetGame(run.seed);
+    resetGame(run.seed, run.enemySeed);
     let openState = null;
     for (const [index, record] of run.turns.entries()) {
       const last = index === run.turns.length - 1;
