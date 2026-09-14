@@ -37,6 +37,16 @@
     </section>
 
     <section class="battle-layout">
+      <section id="enemy-orders" class="enemy-orders-panel" aria-labelledby="enemy-orders-title">
+        <div class="panel-heading">
+          <div>
+            <p class="kicker">ENEMY ORDERS</p>
+            <h2 id="enemy-orders-title" tabindex="-1">敵の命令（計画前に確定）</h2>
+          </div>
+        </div>
+        <div id="intent-list" class="intent-list"></div>
+      </section>
+
       <div class="board-panel">
         <div class="panel-heading">
           <div>
@@ -64,28 +74,68 @@
         <div class="timeline-heading">
           <div>
             <p class="kicker">ACTION ORDER</p>
-            <h2 id="execution-flow-title" class="execution-flow" tabindex="-1">
-              左から順に実行 <span aria-hidden="true">01 → 02 → 03 → …</span>
-            </h2>
+            <h2 id="execution-flow-title" class="execution-flow" tabindex="-1">行動予測</h2>
             <p id="speed-order-rule" class="timeline-rule">
-              FAST → NORMAL → SLOW　<span>同速度は味方が先</span>
+              味方① → 敵① → 味方② → 敵② → 味方③ → 敵③　<span>命令のない枠は飛ばします</span>
             </p>
           </div>
           <button id="preview-final" class="preview-final-button" aria-describedby="forecast-stage-note">最終予測</button>
         </div>
         <div id="action-timeline" class="action-timeline"
-             role="group" aria-label="左から順に実行する敵味方の行動順"
+             role="group" aria-label="味方と敵が交互に解決する行動予測、3組"
              aria-describedby="execution-flow-title speed-order-rule"></div>
         <div id="timeline-detail-panel" class="timeline-detail-panel" hidden></div>
         <div class="timeline-footer">
           <div id="idle-units" class="idle-units"></div>
           <p id="forecast-stage-note" class="forecast-stage-note">最終予測＝全行動直後（ターン末の解除・ドロー前）</p>
         </div>
+      </section>
 
-        <details class="intent-reference">
-          <summary>敵の効果詳細とHP</summary>
-          <div id="intent-list" class="intent-list"></div>
-        </details>
+      <section class="command-panel">
+        <div class="command-topline">
+          <div>
+            <p class="kicker">COMMAND HAND</p>
+            <p class="command-copy">味方 → カード → 対象</p>
+          </div>
+          <div class="command-points" aria-label="残り命令数">
+            <span>COMMAND</span>
+            <div id="command-pips" class="command-pips"></div>
+          </div>
+        </div>
+
+        <div class="actor-picker" aria-labelledby="actor-picker-title">
+          <p id="actor-picker-title" class="kicker" tabindex="-1">選んだ味方の命令</p>
+          <details class="actor-list-details">
+            <summary>味方一覧から選ぶ</summary>
+            <div id="actor-strip" class="actor-strip" role="group" aria-label="命令する味方"></div>
+          </details>
+          <p id="actor-status" class="actor-status" role="status" aria-live="polite" tabindex="-1"></p>
+          <details class="actor-help"><summary>対象表示について</summary><p class="actor-explain">「対象あり」は今の計画で指定可能という意味です。実行時の発動成功は保証しません。</p></details>
+          <div id="actor-options" class="actor-options" aria-label="選んだ味方の命令"></div>
+        </div>
+
+        <div id="mode-bar" class="mode-bar" hidden>
+          <button id="technique-mode" class="mode-button active">固有技として使う</button>
+          <button id="move-mode" class="mode-button">移動命令に変換</button>
+          <p id="mode-help"></p>
+        </div>
+
+        <div id="hand" class="hand" aria-label="手札"></div>
+
+        <div class="queue-row">
+          <div>
+            <p id="order-queue-title" class="kicker" tabindex="-1">ORDER QUEUE</p>
+            <div id="order-queue" class="order-queue"></div>
+            <p id="queue-return-status" class="queue-return-status" role="status" aria-live="polite" aria-atomic="true"></p>
+          </div>
+          <div id="execute-guide-target" class="queue-actions" tabindex="-1" aria-label="作戦実行ボタンの場所">
+            <button id="undo-button" class="secondary-button" disabled>1手戻す</button>
+            <button id="execute-button" class="execute-button" disabled>
+              <span>EXECUTE</span>
+              作戦実行
+            </button>
+          </div>
+        </div>
       </section>
 
       <aside class="side-panel">
@@ -103,53 +153,6 @@
           </details>
         </section>
       </aside>
-    </section>
-
-    <section class="command-panel">
-      <div class="command-topline">
-        <div>
-          <p class="kicker">COMMAND HAND</p>
-          <p class="command-copy">味方 → カード → 対象</p>
-        </div>
-        <div class="command-points" aria-label="残り命令数">
-          <span>COMMAND</span>
-          <div id="command-pips" class="command-pips"></div>
-        </div>
-      </div>
-
-      <div class="actor-picker" aria-labelledby="actor-picker-title">
-        <p id="actor-picker-title" class="kicker" tabindex="-1">選んだ味方の命令</p>
-        <details class="actor-list-details">
-          <summary>味方一覧から選ぶ</summary>
-          <div id="actor-strip" class="actor-strip" role="group" aria-label="命令する味方"></div>
-        </details>
-        <p id="actor-status" class="actor-status" role="status" aria-live="polite" tabindex="-1"></p>
-        <details class="actor-help"><summary>対象表示について</summary><p class="actor-explain">「対象あり」は今の計画で指定可能という意味です。実行時の発動成功は保証しません。</p></details>
-        <div id="actor-options" class="actor-options" aria-label="選んだ味方の命令"></div>
-      </div>
-
-      <div id="mode-bar" class="mode-bar" hidden>
-        <button id="technique-mode" class="mode-button active">固有技として使う</button>
-        <button id="move-mode" class="mode-button">移動命令に変換</button>
-        <p id="mode-help"></p>
-      </div>
-
-      <div id="hand" class="hand" aria-label="手札"></div>
-
-      <div class="queue-row">
-        <div>
-          <p id="order-queue-title" class="kicker" tabindex="-1">ORDER QUEUE</p>
-          <div id="order-queue" class="order-queue"></div>
-          <p id="queue-return-status" class="queue-return-status" role="status" aria-live="polite" aria-atomic="true"></p>
-        </div>
-        <div id="execute-guide-target" class="queue-actions" tabindex="-1" aria-label="作戦実行ボタンの場所">
-          <button id="undo-button" class="secondary-button" disabled>1手戻す</button>
-          <button id="execute-button" class="execute-button" disabled>
-            <span>EXECUTE</span>
-            作戦実行
-          </button>
-        </div>
-      </div>
     </section>
   </main>
 
@@ -253,8 +256,8 @@
       </div>
     </footer>
   </dialog>
-  <script src="game.js"></script>
   <script src="notes-core.js"></script>
+  <script src="game.js"></script>
   <script src="notes.js"></script>
 </body>
 </html>

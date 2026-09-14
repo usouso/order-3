@@ -176,8 +176,368 @@
     const prefilled = url.href.length <= 1800;
     return { url: prefilled ? url.href : TARGET, body, long: !prefilled, prefilled };
   }
+  /* ACT26 play log: seeded shuffle source, per-run recorder and local run store. No DOM, no network. */
+  const PLAYLOG_PREFIX = "order3.playlog.v1.run.";
+  const PLAYLOG_SCHEMA = 1;
+  const PLAYLOG_LIMITS = Object.freeze({ runs: 20, chars: 1500000, turns: 60, comments: 50, commentCodePoints: 140 });
+  const MINUTE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}Z$/;
+
+  // mulberry32. The generator state after n draws is seed + n * 0x6D2B79F5, so {seed, calls} fully restores it.
+  function rngValue(seed, index) {
+    let t = ((seed >>> 0) + Math.imul(index + 1, 0x6D2B79F5)) | 0;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  }
+  function createRng(seed, calls = 0) {
+    return { seed: seed >>> 0, calls, next() { const value = rngValue(this.seed, this.calls); this.calls += 1; return value; } };
+  }
+  const isUint32 = value => Number.isInteger(value) && value >= 0 && value <= 0xFFFFFFFF;
+  function chooseSeed(env = globalThis) {
+    if (isUint32(env.ORDER3_TEST_SEED)) return env.ORDER3_TEST_SEED;
+    if (env.crypto?.getRandomValues) return env.crypto.getRandomValues(new Uint32Array(1))[0];
+    return (Date.now() ^ Math.floor((env.performance?.now?.() || 0) * 1000)) >>> 0;
+  }
+  const minuteStamp = ms => new Date(Math.floor(ms / 60000) * 60000).toISOString().slice(0, 16) + "Z";
+  const layoutClass = width => width < 480 ? "narrow" : width < 900 ? "medium" : "wide";
+  const codePoints = text => Array.from(String(text)).length;
+  function commentText(text) {
+    const trimmed = typeof text === "string" ? text.trim() : "";
+    if (!trimmed) return { ok: false, reason: "empty" };
+    if (/[\r\n]/.test(trimmed) || [0x2028, 0x2029].some(code => trimmed.includes(String.fromCharCode(code)))) return { ok: false, reason: "newline" };
+    if (codePoints(trimmed) > PLAYLOG_LIMITS.commentCodePoints) return { ok: false, reason: "too-long" };
+    return { ok: true, text: trimmed };
+  }
+  function newRunId(cryptoObject = globalThis.crypto) {
+    if (cryptoObject?.randomUUID) return cryptoObject.randomUUID();
+    return `run-${Date.now().toString(36)}-${(++fallbackSequence).toString(36)}`;
+  }
+
+  // Plain, whitelisted copies. Unknown fields never enter a log.
+  const cellRecord = cell => ({ x: cell.x, y: cell.y });
+  const unitRecord = unit => ({ id: unit.id, hp: unit.hp, x: unit.x, y: unit.y, guard: unit.guard, rooted: unit.rooted, marked: unit.marked });
+  function queueRecord(action) {
+    return { instanceId: action.instanceId ?? action.instance?.instanceId, cardId: action.cardId, mode: action.mode, actorId: action.actorId,
+      targetId: action.targetId ?? null, target: action.target ? cellRecord(action.target) : null, speed: action.speed };
+  }
+  function commentContextRecord(context) {
+    const selection = context?.selection;
+    const preview = context?.preview || {};
+    return {
+      selection: selection ? { instanceId: selection.instanceId, cardId: selection.cardId, mode: selection.mode, moveUnitId: selection.moveUnitId ?? null } : null,
+      queue: (context?.queue || []).map(queueRecord),
+      preview: { kind: preview.kind || "current", eventIndex: Number.isInteger(preview.eventIndex) ? preview.eventIndex : null, eventKey: preview.eventKey ?? null },
+      battle: context?.battle ?? null
+    };
+  }
+  const PHASE_LABEL = { planning: "計画中", resolving: "作戦解決中", ended: "戦闘終了" };
+  const PREVIEW_LABEL = { current: "現在盤面", "selection-before": "選択した命令の直前", final: "全行動後の最終予測" };
+  // One-line scene text; names maps cardId to the displayed card name.
+  function commentSceneLine(comment, names = {}) {
+    const { context } = comment;
+    const parts = [`TURN ${String(comment.turn).padStart(2, "0")}`];
+    if (comment.phase === "resolving") parts.push(`作戦解決中${Number.isInteger(context.preview.eventIndex) ? ` 行動順 ${context.preview.eventIndex + 1}` : ""}`);
+    else if (comment.phase === "ended") parts.push(context.battle === "victory" ? "勝利" : context.battle === "defeat" ? "敗北" : PHASE_LABEL.ended);
+    else {
+      parts.push(PHASE_LABEL.planning);
+      if (context.selection) parts.push(`選択: ${names[context.selection.cardId] || context.selection.cardId}`);
+      parts.push(`命令 ${context.queue.length}件`);
+      parts.push(context.preview.kind === "event-after" ? `行動順 ${context.preview.eventIndex + 1} の直後` : PREVIEW_LABEL[context.preview.kind] || context.preview.kind);
+    }
+    return parts.join("｜");
+  }
+
+  // Schema validation shared by the page, the recorder and work/tools/read-order3log.mjs.
+  function validator() {
+    const errors = [];
+    const fail = (path, message) => { if (errors.length < 20) errors.push(`${path}: ${message}`); return false; };
+    const obj = (value, path, keys) => {
+      if (!value || typeof value !== "object" || Array.isArray(value)) return fail(path, "object expected");
+      const extra = Object.keys(value).filter(key => !keys.includes(key));
+      const missing = keys.filter(key => !Object.hasOwn(value, key));
+      if (extra.length) return fail(path, `unknown keys ${extra.join(",")}`);
+      if (missing.length) return fail(path, `missing keys ${missing.join(",")}`);
+      return true;
+    };
+    const arr = (value, path, each, max = Infinity) => {
+      if (!Array.isArray(value)) return fail(path, "array expected");
+      if (value.length > max) return fail(path, `more than ${max} items`);
+      return value.every((item, index) => each(item, `${path}[${index}]`));
+    };
+    const str = (value, path, max = 200) => typeof value === "string" && value.length <= max || fail(path, "string expected");
+    const optStr = (value, path) => value === null || str(value, path);
+    const int = (value, path, min = 0, max = Number.MAX_SAFE_INTEGER) => Number.isInteger(value) && value >= min && value <= max || fail(path, "integer expected");
+    const bool = (value, path) => typeof value === "boolean" || fail(path, "boolean expected");
+    const oneOf = (value, path, options) => options.includes(value) || fail(path, `one of ${options.join("|")} expected`);
+    const minute = (value, path) => typeof value === "string" && MINUTE.test(value) || fail(path, "YYYY-MM-DDTHH:MMZ expected");
+    const cell = (value, path) => obj(value, path, ["x", "y"]) && int(value.x, `${path}.x`, 0, 5) && int(value.y, `${path}.y`, 0, 5);
+    const cells = (value, path) => arr(value, path, cell, 36);
+    const unit = (value, path) => obj(value, path, ["id", "hp", "x", "y", "guard", "rooted", "marked"]) && str(value.id, `${path}.id`)
+      && int(value.hp, `${path}.hp`, 0, 99) && int(value.x, `${path}.x`, 0, 5) && int(value.y, `${path}.y`, 0, 5)
+      && int(value.guard, `${path}.guard`, 0, 999) && bool(value.rooted, `${path}.rooted`) && bool(value.marked, `${path}.marked`);
+    const speed = (value, path) => oneOf(value, path, ["fast", "normal", "slow"]);
+    const queue = (value, path) => obj(value, path, ["instanceId", "cardId", "mode", "actorId", "targetId", "target", "speed"])
+      && str(value.instanceId, `${path}.instanceId`) && str(value.cardId, `${path}.cardId`)
+      && oneOf(value.mode, `${path}.mode`, ["technique", "move", "legacy"]) && str(value.actorId, `${path}.actorId`)
+      && optStr(value.targetId, `${path}.targetId`) && (value.target === null || cell(value.target, `${path}.target`)) && speed(value.speed, `${path}.speed`);
+    const card = (value, path) => obj(value, path, ["instanceId", "cardId"]) && str(value.instanceId, `${path}.instanceId`) && str(value.cardId, `${path}.cardId`);
+    const intent = (value, path) => obj(value, path, ["actorId", "id", "speed", "targetId", "cells"]) && str(value.actorId, `${path}.actorId`)
+      && str(value.id, `${path}.id`) && speed(value.speed, `${path}.speed`) && optStr(value.targetId, `${path}.targetId`) && cells(value.cells, `${path}.cells`);
+    const battle = (value, path) => value === null || oneOf(value, path, ["victory", "defeat"]);
+    const ids = (value, path) => arr(value, path, (id, itemPath) => str(id, itemPath), 12);
+    // deckOrder/discardOrder are instanceId orders, so a hand order that changes the discard pile is caught at its own turn.
+    const start = (value, path) => obj(value, path, ["rngCalls", "units", "hostileRunes", "emberRunes", "hand", "deckCount", "discardCount", "deckOrder", "discardOrder", "intents"])
+      && int(value.rngCalls, `${path}.rngCalls`) && arr(value.units, `${path}.units`, unit, 12) && cells(value.hostileRunes, `${path}.hostileRunes`)
+      && cells(value.emberRunes, `${path}.emberRunes`) && arr(value.hand, `${path}.hand`, card, 12) && int(value.deckCount, `${path}.deckCount`, 0, 99)
+      && int(value.discardCount, `${path}.discardCount`, 0, 99) && ids(value.deckOrder, `${path}.deckOrder`) && ids(value.discardOrder, `${path}.discardOrder`)
+      && arr(value.intents, `${path}.intents`, intent, 12);
+    const commit = (value, path) => value === null || (obj(value, path, ["planMs", "undoCount", "returnCount", "handOrder", "queue"])
+      && int(value.planMs, `${path}.planMs`) && int(value.undoCount, `${path}.undoCount`) && int(value.returnCount, `${path}.returnCount`)
+      && ids(value.handOrder, `${path}.handOrder`) && arr(value.queue, `${path}.queue`, queue, 3));
+    const event = (value, path) => obj(value, path, ["key", "kind", "speed", "status", "reason"]) && str(value.key, `${path}.key`)
+      && oneOf(value.kind, `${path}.kind`, ["player", "enemy"]) && speed(value.speed, `${path}.speed`)
+      && oneOf(value.status, `${path}.status`, ["resolved", "cancelled"]) && str(value.reason, `${path}.reason`, 1000);
+    const result = (value, path) => value === null || (obj(value, path, ["events", "units", "hostileRunes", "emberRunes", "battle", "deckOrder", "discardOrder"])
+      && arr(value.events, `${path}.events`, event, 12) && arr(value.units, `${path}.units`, unit, 12)
+      && cells(value.hostileRunes, `${path}.hostileRunes`) && cells(value.emberRunes, `${path}.emberRunes`) && battle(value.battle, `${path}.battle`)
+      && ids(value.deckOrder, `${path}.deckOrder`) && ids(value.discardOrder, `${path}.discardOrder`));
+    const turn = (value, path) => obj(value, path, ["turn", "start", "commit", "result"]) && int(value.turn, `${path}.turn`, 1, 999)
+      && start(value.start, `${path}.start`) && commit(value.commit, `${path}.commit`) && result(value.result, `${path}.result`)
+      // The recorder writes a result only onto a committed turn, so a result without a commit is not a recorder output.
+      && (value.commit !== null || value.result === null || fail(`${path}.result`, "null expected without commit"));
+    const selection = (value, path) => value === null || (obj(value, path, ["instanceId", "cardId", "mode", "moveUnitId"])
+      && str(value.instanceId, `${path}.instanceId`) && str(value.cardId, `${path}.cardId`)
+      && oneOf(value.mode, `${path}.mode`, ["technique", "move"]) && optStr(value.moveUnitId, `${path}.moveUnitId`));
+    const preview = (value, path) => obj(value, path, ["kind", "eventIndex", "eventKey"])
+      && oneOf(value.kind, `${path}.kind`, ["current", "selection-before", "event-after", "final", "resolving"])
+      && (value.eventIndex === null || int(value.eventIndex, `${path}.eventIndex`, 0, 12)) && optStr(value.eventKey, `${path}.eventKey`);
+    const comment = (value, path) => obj(value, path, ["commentId", "turn", "phase", "ms", "text", "context"]) && str(value.commentId, `${path}.commentId`, 40)
+      && int(value.turn, `${path}.turn`, 1, 999) && oneOf(value.phase, `${path}.phase`, ["planning", "resolving", "ended"]) && int(value.ms, `${path}.ms`)
+      && (commentText(value.text).ok && commentText(value.text).text === value.text || fail(`${path}.text`, "1-140 code points without newline expected"))
+      && obj(value.context, `${path}.context`, ["selection", "queue", "preview", "battle"]) && selection(value.context.selection, `${path}.context.selection`)
+      && arr(value.context.queue, `${path}.context.queue`, queue, 3) && preview(value.context.preview, `${path}.context.preview`)
+      && battle(value.context.battle, `${path}.context.battle`);
+    const run = (value, path) => obj(value, path, ["runId", "gameVersion", "startedAt", "rng", "seed", "layout", "status", "updatedAt", "exportedAt", "truncated", "turns", "comments"])
+      && (str(value.runId, `${path}.runId`, 80) && /^[A-Za-z0-9_-]{1,80}$/.test(value.runId) || fail(`${path}.runId`, "id characters expected"))
+      && str(value.gameVersion, `${path}.gameVersion`, 40) && minute(value.startedAt, `${path}.startedAt`) && oneOf(value.rng, `${path}.rng`, ["mulberry32"])
+      && (isUint32(value.seed) || fail(`${path}.seed`, "uint32 expected")) && oneOf(value.layout, `${path}.layout`, ["narrow", "medium", "wide"])
+      && oneOf(value.status, `${path}.status`, ["playing", "victory", "defeat"]) && minute(value.updatedAt, `${path}.updatedAt`)
+      && (value.exportedAt === null || minute(value.exportedAt, `${path}.exportedAt`)) && bool(value.truncated, `${path}.truncated`)
+      && arr(value.turns, `${path}.turns`, turn, PLAYLOG_LIMITS.turns) && arr(value.comments, `${path}.comments`, comment, PLAYLOG_LIMITS.comments)
+      // The recorder sets truncated only when a turn starts with the turn limit already recorded, so any shorter run is not a recorder output.
+      && (!value.truncated || value.turns.length === PLAYLOG_LIMITS.turns || fail(`${path}.truncated`, `true only with ${PLAYLOG_LIMITS.turns} recorded turns`));
+    const legacyNote = (value, path) => obj(value, path, ["kind", "body", "createdAt", "updatedAt", "scene"]) && str(value.kind, `${path}.kind`)
+      && (typeof value.body === "string" || fail(`${path}.body`, "string expected"));
+    const legacy = (value, path) => {
+      if (value === null) return true;
+      const keys = Object.hasOwn(value || {}, "rawTruncated") ? ["status", "notes", "raw", "rawTruncated"] : ["status", "notes", "raw"];
+      return obj(value, path, keys) && oneOf(value.status, `${path}.status`, ["parsed", "unreadable"])
+        && arr(value.notes, `${path}.notes`, legacyNote) && (value.raw === null || typeof value.raw === "string" && value.raw.length <= 200000 || fail(`${path}.raw`, "string expected"))
+        && (!Object.hasOwn(value, "rawTruncated") || bool(value.rawTruncated, `${path}.rawTruncated`));
+    };
+    const log = (value, path) => {
+      if (value?.format !== "order3log") return fail(`${path}.format`, "order3log expected");
+      if (value.schemaVersion !== PLAYLOG_SCHEMA) return fail(`${path}.schemaVersion`, `unsupported ${JSON.stringify(value.schemaVersion)}`);
+      return obj(value, path, ["format", "schemaVersion", "exportedAt", "exportedBy", "runs", "legacyNotes"]) && minute(value.exportedAt, `${path}.exportedAt`)
+        && str(value.exportedBy, `${path}.exportedBy`, 40) && arr(value.runs, `${path}.runs`, run) && legacy(value.legacyNotes, `${path}.legacyNotes`);
+    };
+    return { errors, run, log };
+  }
+  function validateRun(run) { const check = validator(); const ok = Boolean(check.run(run, "run")); return { ok: ok && !check.errors.length, errors: check.errors }; }
+  function validateLog(log) { const check = validator(); const ok = Boolean(check.log(log, "log")); return { ok: ok && !check.errors.length, errors: check.errors }; }
+  function buildLogEnvelope(runs, { exportedAt = minuteStamp(Date.now()), exportedBy, legacyNotes = null } = {}) {
+    return { format: "order3log", schemaVersion: PLAYLOG_SCHEMA, exportedAt, exportedBy, runs: clone(runs), legacyNotes: legacyNotes === null ? null : clone(legacyNotes) };
+  }
+  // First differing leaf between two plain JSON values, for replay checkpoints.
+  function firstDifference(expected, actual, path = "") {
+    if (Object.is(expected, actual)) return null;
+    const bothObjects = expected && actual && typeof expected === "object" && typeof actual === "object" && Array.isArray(expected) === Array.isArray(actual);
+    if (!bothObjects) return { path: path || "(root)", expected, actual };
+    if (Array.isArray(expected) && expected.length !== actual.length) {
+      for (let index = 0; index < Math.min(expected.length, actual.length); index += 1) {
+        const inner = firstDifference(expected[index], actual[index], `${path}[${index}]`);
+        if (inner) return inner;
+      }
+      return { path: `${path}.length`, expected: expected.length, actual: actual.length };
+    }
+    const keys = Array.isArray(expected) ? expected.map((_, index) => index) : [...new Set([...Object.keys(expected), ...Object.keys(actual)])];
+    for (const key of keys) {
+      const inner = firstDifference(expected[key], actual[key], Array.isArray(expected) ? `${path}[${key}]` : path ? `${path}.${key}` : String(key));
+      if (inner) return inner;
+    }
+    return null;
+  }
+
+  // One localStorage key per run. Unreadable or unknown-version keys are listed as a count and never touched.
+  function createRunStore(getStorage) {
+    const parsed = new Map(); // key -> { raw, run } so repeated writes do not re-validate unchanged runs.
+    function readEntry(key, raw) {
+      const cached = parsed.get(key);
+      if (cached && cached.raw === raw) return cached.run;
+      let data = null;
+      try { data = JSON.parse(raw); } catch { data = null; }
+      const run = data?.schemaVersion === PLAYLOG_SCHEMA && Object.keys(data).length === 2 && validateRun(data.run).ok
+        && key === PLAYLOG_PREFIX + data.run.runId ? data.run : null;
+      parsed.set(key, { raw, run });
+      return run;
+    }
+    function entries(storage) {
+      const runs = [];
+      let unreadable = 0;
+      const keys = [];
+      for (let index = 0; index < storage.length; index += 1) {
+        const key = storage.key(index);
+        if (typeof key === "string" && key.startsWith(PLAYLOG_PREFIX)) keys.push(key);
+      }
+      for (const key of keys) {
+        const raw = storage.getItem(key);
+        const run = typeof raw === "string" ? readEntry(key, raw) : null;
+        if (run) runs.push({ key, run, chars: raw.length });
+        else unreadable += 1;
+      }
+      return { runs, unreadable };
+    }
+    const exportedSinceChange = run => run.exportedAt !== null && run.exportedAt >= run.updatedAt;
+    const older = (a, b) => a.run.startedAt.localeCompare(b.run.startedAt) || a.run.updatedAt.localeCompare(b.run.updatedAt) || a.run.runId.localeCompare(b.run.runId);
+    return {
+      list() {
+        const { runs, unreadable } = entries(getStorage());
+        return { runs: runs.sort(older).map(entry => clone(entry.run)), unreadable };
+      },
+      write(run, currentRunId = run.runId) {
+        try {
+          const storage = getStorage();
+          const value = JSON.stringify({ schemaVersion: PLAYLOG_SCHEMA, run });
+          if (value.length > PLAYLOG_LIMITS.chars) return { ok: false, error: "limit", evicted: [] };
+          const others = entries(storage).runs.filter(entry => entry.run.runId !== run.runId);
+          let count = others.length + 1;
+          let chars = others.reduce((sum, entry) => sum + entry.chars, value.length);
+          const removable = others.filter(entry => entry.run.runId !== currentRunId);
+          const candidates = [...removable.filter(entry => !entry.run.comments.length).sort(older),
+            ...removable.filter(entry => entry.run.comments.length && exportedSinceChange(entry.run)).sort(older)];
+          const evict = [];
+          while ((count > PLAYLOG_LIMITS.runs || chars > PLAYLOG_LIMITS.chars) && candidates.length) {
+            const entry = candidates.shift();
+            evict.push(entry);
+            count -= 1;
+            chars -= entry.chars;
+          }
+          // Evicting cannot make room: keep every stored run and leave this one in memory.
+          if (count > PLAYLOG_LIMITS.runs || chars > PLAYLOG_LIMITS.chars) return { ok: false, error: "limit", evicted: [] };
+          for (const entry of evict) storage.removeItem(entry.key);
+          storage.setItem(PLAYLOG_PREFIX + run.runId, value);
+          return { ok: true, error: "", evicted: evict.map(entry => entry.run.runId) };
+        } catch (err) {
+          return { ok: false, error: err?.name === "QuotaExceededError" ? "quota" : "unavailable", evicted: [] };
+        }
+      },
+      remove(runId) {
+        try { getStorage().removeItem(PLAYLOG_PREFIX + runId); return true; } catch { return false; }
+      }
+    };
+  }
+
+  // Hooks receive detached plain copies from game.js. A run is stored only after its first commit or comment.
+  function createRecorder({ getStorage, now = () => Date.now(), clock = () => globalThis.performance?.now?.() ?? Date.now(), runId = () => newRunId() } = {}) {
+    const store = createRunStore(getStorage || (() => { throw new Error("no storage"); }));
+    let run = null;
+    let persisted = false;
+    let startedClock = 0;
+    let planning = { startedClock: 0, undoCount: 0, returnCount: 0 };
+    let storage = { state: "memory", error: "" };
+    const touch = () => { run.updatedAt = minuteStamp(now()); };
+    const turnRecord = turn => run?.turns.findLast(item => item.turn === turn) || null;
+    function save() {
+      if (!run || !persisted) return;
+      const written = store.write(run, run.runId);
+      storage = written.ok ? { state: "saved", error: "" } : { state: "memory", error: written.error };
+    }
+    return {
+      battleStart({ seed, gameVersion, width }) {
+        const stamp = minuteStamp(now());
+        run = { runId: runId(), gameVersion, startedAt: stamp, rng: "mulberry32", seed: seed >>> 0, layout: layoutClass(width),
+          status: "playing", updatedAt: stamp, exportedAt: null, truncated: false, turns: [], comments: [] };
+        persisted = false;
+        storage = { state: "memory", error: "" };
+        startedClock = clock();
+        planning = { startedClock, undoCount: 0, returnCount: 0 };
+      },
+      turnStart({ turn, start }) {
+        if (!run) return;
+        planning = { startedClock: clock(), undoCount: 0, returnCount: 0 };
+        if (run.turns.length >= PLAYLOG_LIMITS.turns) run.truncated = true;
+        else run.turns.push({ turn, start: clone(start), commit: null, result: null });
+        touch();
+        save();
+      },
+      planEdit(kind) {
+        if (kind === "undo") planning.undoCount += 1;
+        else if (kind === "return") planning.returnCount += 1;
+      },
+      commit({ turn, handOrder, queue }) {
+        const record = turnRecord(turn);
+        if (!record) return;
+        record.commit = { planMs: Math.max(0, Math.round(clock() - planning.startedClock)), undoCount: planning.undoCount,
+          returnCount: planning.returnCount, handOrder: [...handOrder], queue: clone(queue) };
+        persisted = true;
+        touch();
+        save();
+      },
+      turnResolved({ turn, events, units, hostileRunes, emberRunes, battle, deckOrder, discardOrder }) {
+        const record = turnRecord(turn);
+        if (record?.commit) record.result = clone({ events, units, hostileRunes, emberRunes, battle, deckOrder, discardOrder });
+        if (!run) return;
+        if (battle) run.status = battle;
+        touch();
+        save();
+      },
+      addComment({ text, turn, phase, context }) {
+        if (!run) return { ok: false, reason: "no-run" };
+        const checked = commentText(text);
+        if (!checked.ok) return checked;
+        if (run.comments.length >= PLAYLOG_LIMITS.comments) return { ok: false, reason: "limit" };
+        const sequence = run.comments.reduce((max, item) => Math.max(max, Number(item.commentId.slice(1)) || 0), 0) + 1;
+        const comment = { commentId: `c${sequence}`, turn, phase, ms: Math.max(0, Math.round(clock() - startedClock)), text: checked.text,
+          context: commentContextRecord(context) };
+        const check = validator();
+        check.run({ ...run, comments: [comment] }, "run");
+        if (check.errors.length) return { ok: false, reason: "invalid", errors: check.errors };
+        run.comments.push(comment);
+        persisted = true;
+        touch();
+        save();
+        return { ok: true, comment: clone(comment) };
+      },
+      deleteComment(commentId, targetRunId = run?.runId) {
+        if (run && targetRunId === run.runId) {
+          const before = run.comments.length;
+          run.comments = run.comments.filter(item => item.commentId !== commentId);
+          if (run.comments.length === before) return false;
+          touch();
+          save();
+          return true;
+        }
+        const stored = store.list().runs.find(item => item.runId === targetRunId);
+        if (!stored || !stored.comments.some(item => item.commentId === commentId)) return false;
+        stored.comments = stored.comments.filter(item => item.commentId !== commentId);
+        stored.updatedAt = minuteStamp(now());
+        return store.write(stored, run?.runId ?? null).ok;
+      },
+      get run() { return run ? clone(run) : null; },
+      get storage() { return { ...storage }; },
+      get persisted() { return persisted; },
+      store
+    };
+  }
+
   const api = { KEY, TARGET, FORM_ENTRY, LEGACY_TARGET, KINDS, clone, sameContent, parse, merge, createStore, newId,
-    newSubmissionId, sceneText, markdown, sharePayload, formKey, formText, formPayload };
+    newSubmissionId, sceneText, markdown, sharePayload, formKey, formText, formPayload,
+    PLAYLOG_PREFIX, PLAYLOG_SCHEMA, PLAYLOG_LIMITS, rngValue, createRng, chooseSeed, minuteStamp, layoutClass, codePoints, commentText,
+    queueRecord, unitRecord, cellRecord, commentContextRecord, commentSceneLine, validateRun, validateLog, buildLogEnvelope, firstDifference,
+    createRunStore, createRecorder };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
-  else root.Order3Notes = api;
+  else {
+    api.recorder = createRecorder({ getStorage: () => root.localStorage });
+    root.Order3Notes = api;
+  }
 })(globalThis);

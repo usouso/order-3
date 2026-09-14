@@ -1,109 +1,113 @@
 const SIZE = 6;
-const GAME_VERSION = "ACT 24";
-const SPEED_ORDER = { fast: 0, normal: 1, slow: 2 };
-const SPEED_LABEL = { fast: "FAST", normal: "NORMAL", slow: "SLOW" };
+const GAME_VERSION = "ACT 27";
+// Play-log schema v1 still requires a speed on queue, intent and event records. All actions share this one value; nothing reads it.
+const UNIFORM_SPEED = "normal";
+// Enemy order number by action id, fixed at turn start. It keeps the enemies' relative order from the former speed rule.
+const ENEMY_SLOT = { stalk: 1, cover: 2, inscribe: 3, pounce: 1, shield_drive: 2, detonate: 3, brace: 1, drain: 2, recover: 3 };
+const ENEMY_CYCLE = { pursuer: ["stalk", "pounce", "recover"], bastion: ["cover", "shield_drive", "brace"], cantor: ["inscribe", "detonate", "drain"] };
+const SLOT_MARK = ["①", "②", "③"];
 const WALLS = [{ x: 2, y: 2 }, { x: 3, y: 3 }];
 
 // Display-only contracts. Combat resolution never reads this catalogue.
 const effectRules = {
   distance: { name: "距離と移動", text: "射程は上下左右のマス数。接近は壁・生存駒を通らず、隣接する空き位置へ右→左→下→上の順で探します。足止めや経路なしなら動きません。罠で止まっても、生存して隣接なら攻撃できます。" },
-  targets: { name: "敵予告の対象", text: "敵の対味方行動はターン開始時の最寄りの生存味方を固定。同距離ならHPが低い方、さらに同じならルーク→ヴェイル→イオナ。予告後は選び直さず、災印も予告座標に固定します。" },
-  orders: { name: "速度と命令", text: "FAST→NORMAL→SLOW。同速度は味方先、味方は登録順、敵は追跡獣→城壁兵→詠唱師。1～3命令で実行。対象は命令直前の予測で選び、実行時に戦闘不能・射程外・占有なら不発。全敵または全味方の戦闘不能で残りは取消。" },
+  targets: { name: "敵予告の対象", text: "敵の対味方行動はターン開始時の最寄りの生存味方を固定。同距離ならHPが低い方、さらに同じならルーク→ヴェイル→イオナ。予告後は選び直さず、災印も予告座標に固定します。敵の番号①②③はターン開始時に決まり、計画中も解決中も変わりません。" },
+  orders: { name: "順番と命令", text: "命令は 味方①→敵①→味方②→敵②→味方③→敵③ の順に解決。味方の番号は登録順、敵の番号は計画前に確定して上段に表示。命令のない枠は飛ばす。1～3命令で実行。対象は命令直前の予測で選び、実行時に戦闘不能・射程外・占有なら不発。全敵または全味方の戦闘不能で残りは取消。" },
   damage: { name: "ダメージ", text: "目印がある敵への次の味方由来ダメージに+3して目印を消費。装甲で全吸収しても消費します。その後装甲が吸収し、残りだけHPが減ります。" },
   guard: { name: "装甲", text: "装甲は加算でき、HPより先にダメージを吸収。残りはターン末に消えます。柄打ちは指定した敵の装甲を0にしてから攻撃します。" },
   rooted: { name: "足止め", text: "このターンの接近移動を止めます。攻撃は取り消さず、既に隣接していれば攻撃を受けます。ターン末に消えます。" },
   marked: { name: "目印", text: "このターン、次にその敵が受ける味方由来ダメージ+3。一回で消費、装甲で全吸収しても消費。重ねても増えず、未使用ならターン末に消えます。連鎖火花の各被害者で独立に判定します。" },
   terrain: { name: "罠と災印", text: "火種の罠は敵進入時に一回だけ3ダメージと移動停止。未発動でもターン末に消えます。災印は予告した十字マスへ置き、次ターンの起爆時にそこにいる生存味方へ各4ダメージ。起爆後も詠唱師の戦闘不能による取消時も消えます。同じマスに重ねません。" },
-  legacy: { name: "遺志とALT", text: "持ち主が戦闘不能の手札は共通FASTの遺志として、生存味方一人へ距離無制限で装甲+2。登録後に持ち主が倒れた固有技は変換せず不発。どのカードも代わりにFASTのALT移動へ変換できます。" },
+  legacy: { name: "遺志とALT", text: "持ち主が戦闘不能の手札は共通の遺志として、生存味方一人へ距離無制限で装甲+2。登録後に持ち主が倒れた固有技は変換せず不発。どのカードも代わりにALT移動へ変換できます。" },
   turn: { name: "ターン末", text: "HPと位置は残ります。装甲・足止め・目印・未発動の火種の罠はターン末に消え、災印は次ターンの起爆まで残ります。余った手札と使用カードは捨て札へ。山札が空なら混ぜて5枚まで引きます。最終予測はこの解除とドロー前。" },
 };
 
 const effectCatalog = {
-  stalk: { name: "忍び寄る", speed: "fast", group: "enemy", short: "最寄りの味方へ最大2歩接近し、隣接なら2ダメージ。", detail: ["対象はターン開始時に固定。壁と駒を避け、移動できなくても隣接なら攻撃。"], rules: ["targets", "distance", "damage", "rooted"] },
-  pounce: { name: "飛びかかり", speed: "normal", group: "enemy", short: "最寄りの味方へ最大3歩接近し、隣接なら4ダメージ。", detail: ["対象はターン開始時に固定。届かなければ攻撃なし。"], rules: ["targets", "distance", "damage", "rooted"] },
-  recover: { name: "息を整える", speed: "slow", group: "enemy", short: "最寄りの味方へ最大1歩接近し、隣接なら2ダメージ。", detail: ["移動後も隣接なら攻撃。HP回復はしません。"], rules: ["targets", "distance", "damage", "rooted"] },
-  cover: { name: "装甲支援", speed: "fast", group: "enemy", short: "詠唱師が生存なら詠唱師、そうでなければ自身に装甲+4。", detail: ["距離制限なし。ダメージの移し替えはありません。"], rules: ["guard", "orders"] },
-  shield_drive: { name: "盾の圧力", speed: "normal", group: "enemy", short: "最寄りの味方へ最大1歩接近し、隣接なら3ダメージ。", detail: ["対象はターン開始時に固定。追加の状態効果なし。"], rules: ["targets", "distance", "damage", "rooted"] },
-  brace: { name: "構え", speed: "fast", group: "enemy", short: "自身に装甲+6。残りはターン末に消える。", detail: ["他の装甲と加算します。"], rules: ["guard", "turn"] },
-  inscribe: { name: "災印を刻む", speed: "fast", group: "enemy", short: "最寄りの味方の十字マスに災印。次ターンに各4ダメージ。", detail: ["予告された中心と上下左右の壁・盤外以外の座標へ設置。設置時はダメージなし。"], rules: ["targets", "terrain", "orders"] },
-  detonate: { name: "災印起爆", speed: "slow", group: "enemy", short: "災印上の生存味方に各4ダメージを与え、災印を消す。", detail: ["敵には当たりません。詠唱師が戦闘不能で取消でも、この行動順に災印を消します。"], rules: ["terrain", "damage", "orders"] },
-  drain: { name: "生命吸収", speed: "normal", group: "enemy", short: "最寄りの味方に2ダメージ、自身を最大2回復。", detail: ["対象はターン開始時に固定。対象が戦闘不能なら不発。詠唱師自身のHP上限を超えて回復しません。"], rules: ["targets", "damage", "orders"] },
-  forward_cut: { name: "踏み込み斬り", speed: "normal", group: "card", short: "敵・射程2。距離2なら1歩接近、隣接なら3ダメージ。", detail: ["隣接して始めれば移動なし。接近後も隣接できなければ攻撃は不発。"], rules: ["distance", "damage", "orders", "legacy"] },
-  interpose: { name: "割って入る", speed: "fast", group: "card", short: "他の味方・射程2。最大2歩接近し、経路なしでも両者に装甲+2。", detail: ["実行時に射程を再判定せず、対象への空き経路を進みます。登録前の対象別仮予測で経路を確認できます。"], rules: ["distance", "guard", "orders", "legacy"] },
-  shield_lock: { name: "盾を固める", speed: "fast", group: "card", short: "自身に装甲+5。", detail: ["装甲は加算し、ターン末に残りが消えます。"], rules: ["guard", "turn", "legacy"] },
-  pommel_break: { name: "柄打ち", speed: "normal", group: "card", short: "隣接する敵の装甲を0にして2ダメージ。", detail: ["解除するのは指定敵の装甲だけ。災印の起爆は妨げません。"], rules: ["guard", "damage", "orders", "legacy"] },
-  quickshot: { name: "速射", speed: "fast", group: "card", short: "敵・射程3。2ダメージ。", detail: ["実行時の位置で射程を再判定します。"], rules: ["distance", "damage", "orders", "legacy"] },
-  pinning_arrow: { name: "縫い留め", speed: "fast", group: "card", short: "敵・射程4。1ダメージ、生存していれば足止め。", detail: ["装甲に全吸収されても、生存していれば足止め。ターン末に消えます。"], rules: ["distance", "damage", "rooted", "legacy"] },
-  backstep_shot: { name: "離脱射撃", speed: "normal", group: "card", short: "敵・射程3。2ダメージ後、空き隣接マスへ1歩退く。", detail: ["対象から最も遠い空きマスを選び、同距離なら右→左→下→上。空きがなければ攻撃だけ。"], rules: ["distance", "damage", "orders", "legacy"] },
-  hunters_mark: { name: "狩人の印", speed: "fast", group: "card", short: "敵・射程4。目印を付け、次の味方ダメージ+3。", detail: ["一回で消費、装甲で全吸収されても消費。未使用ならターン末に消えます。"], rules: ["marked", "damage", "orders", "legacy"] },
-  arc_spark: { name: "連鎖火花", speed: "slow", group: "card", short: "敵・射程3。中心へ3、隣接する敵全員へ各2ダメージ。", detail: ["中心を倒しても隣接被害は発生。各敵の目印は独立に判定します。"], rules: ["distance", "damage", "marked", "legacy"] },
-  phase_step: { name: "位相交換", speed: "fast", group: "card", short: "他の味方・射程3。自分とその味方の位置を交換。", detail: ["二人が生存していれば実行時の射程を確認し、壁や駒を越えて交換します。"], rules: ["distance", "orders", "legacy"] },
-  null_sigil: { name: "無効印", speed: "fast", group: "card", short: "味方・射程3。装甲+3。", detail: ["自身も対象にできます。残った装甲はターン末に消えます。"], rules: ["guard", "distance", "legacy"] },
-  ember_rune: { name: "火種の罠", speed: "normal", group: "card", short: "空きマス・射程3。敵進入時に3ダメージと移動停止。", detail: ["一回発動すると消え、未発動でもターン末に消えます。同じマスへ重ね置きしません。"], rules: ["terrain", "distance", "damage", "legacy"] },
-  legacy_rook: { name: "遺志：装甲", speed: "fast", group: "legacy", short: "生存味方1人に装甲+2。距離無制限。", detail: ["持ち主が倒れたカードの共通効果です。"], rules: ["guard", "legacy"] },
-  legacy_vale: { name: "遺志：装甲", speed: "fast", group: "legacy", short: "生存味方1人に装甲+2。距離無制限。", detail: ["持ち主が倒れたカードの共通効果です。"], rules: ["guard", "legacy"] },
-  legacy_iona: { name: "遺志：装甲", speed: "fast", group: "legacy", short: "生存味方1人に装甲+2。距離無制限。", detail: ["持ち主が倒れたカードの共通効果です。"], rules: ["guard", "legacy"] },
-  move: { name: "ALT：移動命令", speed: "fast", group: "common", short: "生存味方1人を空き隣接マスへ1歩移動。", detail: ["カードの持ち主を問わず技の代わりに使えます。"], rules: ["distance", "orders", "legacy"] },
+  stalk: { name: "忍び寄る", group: "enemy", short: "最寄りの味方へ最大2歩接近し、隣接なら2ダメージ。", detail: ["対象はターン開始時に固定。壁と駒を避け、移動できなくても隣接なら攻撃。"], rules: ["targets", "distance", "damage", "rooted"] },
+  pounce: { name: "飛びかかり", group: "enemy", short: "最寄りの味方へ最大3歩接近し、隣接なら4ダメージ。", detail: ["対象はターン開始時に固定。届かなければ攻撃なし。"], rules: ["targets", "distance", "damage", "rooted"] },
+  recover: { name: "息を整える", group: "enemy", short: "最寄りの味方へ最大1歩接近し、隣接なら2ダメージ。", detail: ["移動後も隣接なら攻撃。HP回復はしません。"], rules: ["targets", "distance", "damage", "rooted"] },
+  cover: { name: "装甲支援", group: "enemy", short: "詠唱師が生存なら詠唱師、そうでなければ自身に装甲+4。", detail: ["距離制限なし。ダメージの移し替えはありません。"], rules: ["guard", "orders"] },
+  shield_drive: { name: "盾の圧力", group: "enemy", short: "最寄りの味方へ最大1歩接近し、隣接なら3ダメージ。", detail: ["対象はターン開始時に固定。追加の状態効果なし。"], rules: ["targets", "distance", "damage", "rooted"] },
+  brace: { name: "構え", group: "enemy", short: "自身に装甲+6。残りはターン末に消える。", detail: ["他の装甲と加算します。"], rules: ["guard", "turn"] },
+  inscribe: { name: "災印を刻む", group: "enemy", short: "最寄りの味方の十字マスに災印。次ターンに各4ダメージ。", detail: ["予告された中心と上下左右の壁・盤外以外の座標へ設置。設置時はダメージなし。"], rules: ["targets", "terrain", "orders"] },
+  detonate: { name: "災印起爆", group: "enemy", short: "災印上の生存味方に各4ダメージを与え、災印を消す。", detail: ["敵には当たりません。詠唱師が戦闘不能で取消でも、この行動順に災印を消します。"], rules: ["terrain", "damage", "orders"] },
+  drain: { name: "生命吸収", group: "enemy", short: "最寄りの味方に2ダメージ、自身を最大2回復。", detail: ["対象はターン開始時に固定。対象が戦闘不能なら不発。詠唱師自身のHP上限を超えて回復しません。"], rules: ["targets", "damage", "orders"] },
+  forward_cut: { name: "踏み込み斬り", group: "card", short: "敵・射程2。距離2なら1歩接近、隣接なら3ダメージ。", detail: ["隣接して始めれば移動なし。接近後も隣接できなければ攻撃は不発。"], rules: ["distance", "damage", "orders", "legacy"] },
+  interpose: { name: "割って入る", group: "card", short: "他の味方・射程2。最大2歩接近し、経路なしでも両者に装甲+2。", detail: ["実行時に射程を再判定せず、対象への空き経路を進みます。登録前の対象別仮予測で経路を確認できます。"], rules: ["distance", "guard", "orders", "legacy"] },
+  shield_lock: { name: "盾を固める", group: "card", short: "自身に装甲+5。", detail: ["装甲は加算し、ターン末に残りが消えます。"], rules: ["guard", "turn", "legacy"] },
+  pommel_break: { name: "柄打ち", group: "card", short: "隣接する敵の装甲を0にして2ダメージ。", detail: ["解除するのは指定敵の装甲だけ。災印の起爆は妨げません。"], rules: ["guard", "damage", "orders", "legacy"] },
+  quickshot: { name: "速射", group: "card", short: "敵・射程3。2ダメージ。", detail: ["実行時の位置で射程を再判定します。"], rules: ["distance", "damage", "orders", "legacy"] },
+  pinning_arrow: { name: "縫い留め", group: "card", short: "敵・射程4。1ダメージ、生存していれば足止め。", detail: ["装甲に全吸収されても、生存していれば足止め。ターン末に消えます。"], rules: ["distance", "damage", "rooted", "legacy"] },
+  backstep_shot: { name: "離脱射撃", group: "card", short: "敵・射程3。2ダメージ後、空き隣接マスへ1歩退く。", detail: ["対象から最も遠い空きマスを選び、同距離なら右→左→下→上。空きがなければ攻撃だけ。"], rules: ["distance", "damage", "orders", "legacy"] },
+  hunters_mark: { name: "狩人の印", group: "card", short: "敵・射程4。目印を付け、次の味方ダメージ+3。", detail: ["一回で消費、装甲で全吸収されても消費。未使用ならターン末に消えます。"], rules: ["marked", "damage", "orders", "legacy"] },
+  arc_spark: { name: "連鎖火花", group: "card", short: "敵・射程3。中心へ3、隣接する敵全員へ各2ダメージ。", detail: ["中心を倒しても隣接被害は発生。各敵の目印は独立に判定します。"], rules: ["distance", "damage", "marked", "legacy"] },
+  phase_step: { name: "位相交換", group: "card", short: "他の味方・射程3。自分とその味方の位置を交換。", detail: ["二人が生存していれば実行時の射程を確認し、壁や駒を越えて交換します。"], rules: ["distance", "orders", "legacy"] },
+  null_sigil: { name: "無効印", group: "card", short: "味方・射程3。装甲+3。", detail: ["自身も対象にできます。残った装甲はターン末に消えます。"], rules: ["guard", "distance", "legacy"] },
+  ember_rune: { name: "火種の罠", group: "card", short: "空きマス・射程3。敵進入時に3ダメージと移動停止。", detail: ["一回発動すると消え、未発動でもターン末に消えます。同じマスへ重ね置きしません。"], rules: ["terrain", "distance", "damage", "legacy"] },
+  legacy_rook: { name: "遺志：装甲", group: "legacy", short: "生存味方1人に装甲+2。距離無制限。", detail: ["持ち主が倒れたカードの共通効果です。"], rules: ["guard", "legacy"] },
+  legacy_vale: { name: "遺志：装甲", group: "legacy", short: "生存味方1人に装甲+2。距離無制限。", detail: ["持ち主が倒れたカードの共通効果です。"], rules: ["guard", "legacy"] },
+  legacy_iona: { name: "遺志：装甲", group: "legacy", short: "生存味方1人に装甲+2。距離無制限。", detail: ["持ち主が倒れたカードの共通効果です。"], rules: ["guard", "legacy"] },
+  move: { name: "ALT：移動命令", group: "common", short: "生存味方1人を空き隣接マスへ1歩移動。", detail: ["カードの持ち主を問わず技の代わりに使えます。"], rules: ["distance", "orders", "legacy"] },
 };
 
 const cardDefs = {
   forward_cut: {
-    ownerId: "rook", name: "踏み込み斬り", speed: "normal",
+    ownerId: "rook", name: "踏み込み斬り",
     text: effectCatalog.forward_cut.short,
     target: "enemy", range: 2, categories: ["attack", "mobility"]
   },
   interpose: {
-    ownerId: "rook", name: "割って入る", speed: "fast",
+    ownerId: "rook", name: "割って入る",
     text: effectCatalog.interpose.short,
     target: "allyOther", range: 2, categories: ["defense", "mobility"]
   },
   shield_lock: {
-    ownerId: "rook", name: "盾を固める", speed: "fast",
+    ownerId: "rook", name: "盾を固める",
     text: effectCatalog.shield_lock.short,
     target: "self", range: 0, categories: ["defense"]
   },
   pommel_break: {
-    ownerId: "rook", name: "柄打ち", speed: "normal",
+    ownerId: "rook", name: "柄打ち",
     text: effectCatalog.pommel_break.short,
     target: "enemy", range: 1, categories: ["control", "attack"]
   },
   quickshot: {
-    ownerId: "vale", name: "速射", speed: "fast",
+    ownerId: "vale", name: "速射",
     text: effectCatalog.quickshot.short,
     target: "enemy", range: 3, categories: ["attack"]
   },
   pinning_arrow: {
-    ownerId: "vale", name: "縫い留め", speed: "fast",
+    ownerId: "vale", name: "縫い留め",
     text: effectCatalog.pinning_arrow.short,
     target: "enemy", range: 4, categories: ["control", "attack"]
   },
   backstep_shot: {
-    ownerId: "vale", name: "離脱射撃", speed: "normal",
+    ownerId: "vale", name: "離脱射撃",
     text: effectCatalog.backstep_shot.short,
     target: "enemy", range: 3, categories: ["attack", "mobility"]
   },
   hunters_mark: {
-    ownerId: "vale", name: "狩人の印", speed: "fast",
+    ownerId: "vale", name: "狩人の印",
     text: effectCatalog.hunters_mark.short,
     target: "enemy", range: 4, categories: ["control"], categoryDetail: "印"
   },
   arc_spark: {
-    ownerId: "iona", name: "連鎖火花", speed: "slow",
+    ownerId: "iona", name: "連鎖火花",
     text: effectCatalog.arc_spark.short,
     target: "enemy", range: 3, categories: ["attack"]
   },
   phase_step: {
-    ownerId: "iona", name: "位相交換", speed: "fast",
+    ownerId: "iona", name: "位相交換",
     text: effectCatalog.phase_step.short,
     target: "allyOther", range: 3, categories: ["mobility"]
   },
   null_sigil: {
-    ownerId: "iona", name: "無効印", speed: "fast",
+    ownerId: "iona", name: "無効印",
     text: effectCatalog.null_sigil.short,
     target: "ally", range: 3, categories: ["defense"]
   },
   ember_rune: {
-    ownerId: "iona", name: "火種の罠", speed: "normal",
+    ownerId: "iona", name: "火種の罠",
     text: effectCatalog.ember_rune.short,
     target: "empty", range: 3, categories: ["trap", "control"]
   }
@@ -160,11 +164,60 @@ const game = {
   flashUnitId: null,
   log: [],
   instanceCounter: 0,
+  rng: null,
   timelineCursor: -1,
   previewIndex: null,
   activeForecast: null,
   lastResolvedState: null
 };
+
+// Play-log hooks see detached plain copies only. A recorder fault stops that run's log and never the battle.
+const playlog = { recorder: null, stopped: false, suspended: false, error: "" };
+try { playlog.recorder = globalThis.Order3Notes?.recorder || null; } catch { playlog.recorder = null; }
+
+function recordPlaylog(hook, buildPayload, startsRun = false) {
+  if (startsRun) { playlog.stopped = false; playlog.error = ""; }
+  if (playlog.suspended || playlog.stopped || !playlog.recorder) return;
+  try {
+    playlog.recorder[hook](buildPayload());
+  } catch (error) {
+    playlog.stopped = true;
+    try { playlog.error = String(error?.message || error); } catch { playlog.error = "recorder error"; }
+  }
+}
+
+function playlogTurnStart() {
+  return {
+    turn: game.turn,
+    start: {
+      rngCalls: game.rng.calls,
+      units: game.units.map(Order3Notes.unitRecord),
+      hostileRunes: game.hostileRunes.map(Order3Notes.cellRecord),
+      emberRunes: game.emberRunes.map(Order3Notes.cellRecord),
+      hand: game.hand.map(card => ({ instanceId: card.instanceId, cardId: card.cardId })),
+      deckCount: game.deck.length,
+      discardCount: game.discard.length,
+      deckOrder: game.deck.map(card => card.instanceId),
+      discardOrder: game.discard.map(card => card.instanceId),
+      intents: game.intents.map(item => ({ actorId: item.actorId, id: item.id, speed: item.speed, targetId: item.targetId ?? null, cells: (item.cells || []).map(Order3Notes.cellRecord) }))
+    }
+  };
+}
+
+function playlogTurnResult(forecast) {
+  return {
+    turn: game.turn,
+    events: forecast.events.map((event, index) => ({ key: event.key, kind: event.kind, speed: event.speed,
+      status: forecast.snapshots[index].outcome.status, reason: forecast.snapshots[index].outcome.reason || "" })),
+    units: game.units.map(Order3Notes.unitRecord),
+    hostileRunes: game.hostileRunes.map(Order3Notes.cellRecord),
+    emberRunes: game.emberRunes.map(Order3Notes.cellRecord),
+    battle: battleResult(),
+    // Piles as endTurnCleanup leaves them (hand, then committed cards, onto the discard), also when the battle ends first.
+    deckOrder: game.deck.map(card => card.instanceId),
+    discardOrder: [...game.discard, ...game.hand, ...game.queue.map(action => action.instance)].map(card => card.instanceId)
+  };
+}
 
 // Short-lived reading state, outside combat and opt-in note scenes.
 const movementUI = { battleGeneration: 0, queueGeneration: 0, open: new Set(), returnTo: null };
@@ -249,9 +302,9 @@ function clearActorView() { activeActorId = null; actorChoice = null; }
 const turnGuide = { active: false, step: 0, announcedStep: null };
 const turnGuideSteps = [
   { title: "目的と勝敗", target: "#battlefield-heading", copy: () => `敵を全員倒せば勝利、味方が全員倒れると敗北です。現在、敵${living("enemy").length}体・味方${living("player").length}人が生存。1ターンで勝つ必要はありません。盤面の駒と実HPを見てください。` },
-  { title: "敵の予告", target: "#execution-flow-title", copy: () => "ACTION ORDERは左から速度順です。敵カードを自分で開くと、その敵の移動と予告対象を盤面で追えます。命令を足すと予測は変わります。" },
+  { title: "敵の予告", target: "#enemy-orders-title", copy: () => "敵の命令①②③は計画前に確定しています。味方①→敵①→味方②→敵②→味方③→敵③の順に解決します。行動予測の敵の枠を開くと、その敵の移動と対象を盤面で追えます。" },
   { title: "味方と手札", target: "#actor-picker-title", copy: () => "盤面か味方列で一人を選び、手札にある固有技を探せます。手札にない技は使えません。カード直接選択やALT移動もできます。" },
-  { title: "命令と予測", target: "#order-queue-title", copy: () => `カードと対象を自分で選んで登録します。現在${game.queue.length}件／最大3件。1件から実行でき、同じ味方へ複数命令も可能です。ACTION ORDERと予測を見て、1手戻して組み直せます。` },
+  { title: "命令と予測", target: "#order-queue-title", copy: () => `カードと対象を自分で選んで登録します。現在${game.queue.length}件／最大3件。1件から実行でき、同じ味方へ複数命令も可能です。行動予測を見て、1手戻して組み直せます。` },
   { title: "明示して実行", target: "#execute-guide-target", copy: () => game.queue.length
     ? `現在${game.queue.length}件の命令があります。「作戦実行」を自分で押すと計画を解決します。案内を終えても自動実行しません。`
     : "命令はまだ0件です。1件以上登録すると「作戦実行」を押せます。案内を終えても自動実行しません。" }
@@ -310,7 +363,10 @@ function makeUnit(id, name, icon, side, hp, x, y, role) {
   };
 }
 
-function resetGame() {
+function resetGame(seed = Order3Notes.chooseSeed(globalThis)) {
+  // The seed is fixed before any shuffle; replay passes a logged seed.
+  game.rng = Order3Notes.createRng(seed);
+  recordPlaylog("battleStart", () => ({ seed: game.rng.seed, gameVersion: GAME_VERSION, width: globalThis.innerWidth || 0 }), true);
   closeTurnGuide(false);
   clearMovementReading(true, true);
   clearActorView();
@@ -336,6 +392,7 @@ function resetGame() {
   game.intents = buildEnemyIntents();
   addLog("作戦開始。敵の行動はすべて予告されます。", true);
   render();
+  recordPlaylog("turnStart", playlogTurnStart);
 }
 
 function makeCardInstance(cardId) {
@@ -346,7 +403,7 @@ function makeCardInstance(cardId) {
 function shuffle(items) {
   const result = [...items];
   for (let i = result.length - 1; i > 0; i -= 1) {
-    const j = Math.floor(Math.random() * (i + 1));
+    const j = Math.floor(game.rng.next() * (i + 1));
     [result[i], result[j]] = [result[j], result[i]];
   }
   return result;
@@ -522,15 +579,15 @@ function buildEnemyIntents() {
     const phase = (game.turn - 1) % 3;
     if (phase === 0) {
       const target = nearestUnit(pursuer, players);
-      intents.push(intent(pursuer, "stalk", "忍び寄る", "fast", target,
+      intents.push(intent(pursuer, "stalk", "忍び寄る", target,
         effectCatalog.stalk.short));
     } else if (phase === 1) {
       const target = nearestUnit(pursuer, players);
-      intents.push(intent(pursuer, "pounce", "飛びかかり", "normal", target,
+      intents.push(intent(pursuer, "pounce", "飛びかかり", target,
         effectCatalog.pounce.short));
     } else {
       const target = nearestUnit(pursuer, players);
-      intents.push(intent(pursuer, "recover", "息を整える", "slow", target,
+      intents.push(intent(pursuer, "recover", "息を整える", target,
         effectCatalog.recover.short));
     }
   }
@@ -540,14 +597,14 @@ function buildEnemyIntents() {
     const phase = (game.turn - 1) % 3;
     if (phase === 0) {
       const target = getUnit("cantor").hp > 0 ? getUnit("cantor") : bastion;
-      intents.push(intent(bastion, "cover", "装甲支援", "fast", target,
+      intents.push(intent(bastion, "cover", "装甲支援", target,
         effectCatalog.cover.short));
     } else if (phase === 1) {
       const target = nearestUnit(bastion, players);
-      intents.push(intent(bastion, "shield_drive", "盾の圧力", "normal", target,
+      intents.push(intent(bastion, "shield_drive", "盾の圧力", target,
         effectCatalog.shield_drive.short));
     } else {
-      intents.push(intent(bastion, "brace", "構え", "fast", bastion,
+      intents.push(intent(bastion, "brace", "構え", bastion,
         effectCatalog.brace.short));
     }
   }
@@ -558,24 +615,35 @@ function buildEnemyIntents() {
     if (phase === 0) {
       const target = nearestUnit(cantor, players);
       const cells = [target, ...neighbors(target)].filter(cell => !isWall(cell.x, cell.y));
-      const result = intent(cantor, "inscribe", "災印を刻む", "fast", target,
+      const result = intent(cantor, "inscribe", "災印を刻む", target,
         effectCatalog.inscribe.short, cells, { targetKind: "cells" });
       intents.push(result);
     } else if (phase === 1) {
-      intents.push(intent(cantor, "detonate", "災印起爆", "slow", null,
+      intents.push(intent(cantor, "detonate", "災印起爆", null,
         effectCatalog.detonate.short, [...game.hostileRunes],
         { targetKind: "cells" }));
     } else {
       const target = nearestUnit(cantor, players);
-      intents.push(intent(cantor, "drain", "生命吸収", "normal", target,
+      intents.push(intent(cantor, "drain", "生命吸収", target,
         effectCatalog.drain.short));
     }
   }
-  return intents;
+  // Enemy order ①②③; a defeated enemy leaves its number empty and later numbers do not move up.
+  return intents.sort((a, b) => a.slot - b.slot);
 }
 
-function intent(actor, id, name, speed, target, description, cells = [], options = {}) {
-  return { actorId: actor.id, id, name, speed, targetId: target?.id || null, description, cells, ...options };
+function intent(actor, id, name, target, description, cells = [], options = {}) {
+  return { actorId: actor.id, id, name, speed: UNIFORM_SPEED, slot: ENEMY_SLOT[id], targetId: target?.id || null, description, cells, ...options };
+}
+
+function allySlotLabel(number) { return `味方${SLOT_MARK[number - 1] || number}`; }
+function enemySlotLabel(number) { return `敵${SLOT_MARK[number - 1] || number}`; }
+function eventSlotLabel(event) { return event.kind === "enemy" ? enemySlotLabel(event.slot) : allySlotLabel(event.slot); }
+function eventCauseLabel(event) { return `${eventSlotLabel(event)}・${timelineEventView(event).action}`; }
+
+// The enemy that owns an order number this turn, also when it is defeated and its number is empty.
+function enemySlotOwner(slot, turn = game.turn) {
+  return Object.keys(ENEMY_CYCLE).find(actorId => ENEMY_SLOT[ENEMY_CYCLE[actorId][(turn - 1) % 3]] === slot) || null;
 }
 
 function selectCard(instanceId, fromActor = false, moveActorId = null) {
@@ -608,7 +676,7 @@ function setMode(mode) {
 }
 
 function getLegacy(ownerId) {
-  return { name: "遺志：装甲", text: effectCatalog[`legacy_${ownerId}`].short, target: "ally", speed: "fast", categories: ["defense"] };
+  return { name: "遺志：装甲", text: effectCatalog[`legacy_${ownerId}`].short, target: "ally", categories: ["defense"] };
 }
 
 function provisionalActionForSelection(providedSelection = null) {
@@ -621,7 +689,7 @@ function provisionalActionForSelection(providedSelection = null) {
   if (selection.mode === "move") {
     return {
       instance: card, cardId: card.cardId, mode: "move", actorId: selection.moveUnitId,
-      target: null, speed: "fast", label: `${selection.moveUnitId ? getUnit(selection.moveUnitId)?.name : "味方"}：移動`,
+      target: null, speed: UNIFORM_SPEED, label: `${selection.moveUnitId ? getUnit(selection.moveUnitId)?.name : "味方"}：移動`,
       provisional: true
     };
   }
@@ -629,12 +697,12 @@ function provisionalActionForSelection(providedSelection = null) {
     const legacyDef = getLegacy(def.ownerId);
     return {
       instance: card, cardId: card.cardId, mode: "legacy", actorId: def.ownerId,
-      targetId: null, speed: legacyDef.speed, label: legacyDef.name, provisional: true
+      targetId: null, speed: UNIFORM_SPEED, label: legacyDef.name, provisional: true
     };
   }
   return {
     instance: card, cardId: card.cardId, mode: "technique", actorId: def.ownerId,
-    targetId: null, target: null, speed: def.speed, label: `${liveOwner.name}：${def.name}`,
+    targetId: null, target: null, speed: UNIFORM_SPEED, label: `${liveOwner.name}：${def.name}`,
     provisional: true
   };
 }
@@ -730,7 +798,7 @@ function interposeCandidateForecasts() {
     if (!target || target.side !== "player" || target.id === "rook") return null;
     const action = {
       instance: selection.card, cardId: "interpose", mode: "technique", actorId: "rook",
-      targetId: target.id, target: { x: cell.x, y: cell.y }, speed: cardDefs.interpose.speed,
+      targetId: target.id, target: { x: cell.x, y: cell.y }, speed: UNIFORM_SPEED,
       label: `${getUnit("rook").name}：${cardDefs.interpose.name}`
     };
     const forecast = predictTimeline(buildResolutionEvents([...game.queue, action]));
@@ -869,7 +937,7 @@ function actorTechniqueCandidate(card) {
   if (owner?.hp > 0 && (!before || before.hp <= 0)) {
     const defeat = firstPriorDefeatEvent(context, def.ownerId, owner.hp);
     return { targets, reason: defeat
-      ? `この命令の直前、先行する${SPEED_LABEL[defeat.speed]}の行動で戦闘不能です。`
+      ? `この命令の直前、先に解決する「${eventCauseLabel(defeat)}」で戦闘不能です。`
       : "この命令の直前に戦闘不能です。" };
   }
   return { targets, reason: context
@@ -882,9 +950,9 @@ function actorMoveCandidate(unitId) {
   const selection = { card: game.hand[0], mode: "move", moveUnitId: unitId };
   const context = selectionTimelineContext(selection);
   const mover = context && simGetUnit(context.state, unitId);
-  if (!mover || mover.hp <= 0) return { targets: [], reason: "この命令のFAST時点で戦闘不能です。" };
+  if (!mover || mover.hp <= 0) return { targets: [], reason: "この命令の直前に戦闘不能です。" };
   const targets = validCells(context, selection);
-  return { targets, reason: targets.length ? "FAST時点で隣接する空きマスあり" : "この命令のFAST時点に隣接する空きマスがありません。" };
+  return { targets, reason: targets.length ? "この命令の直前に隣接する空きマスあり" : "この命令の直前に隣接する空きマスがありません。" };
 }
 
 function renderActorPanel() {
@@ -928,11 +996,11 @@ function renderActorPanel() {
     button.setAttribute("aria-pressed", String(game.selectedInstanceId === card.instanceId && game.mode === "technique"));
     button.className = result.targets.length ? "" : "no-target";
     button.disabled = full;
-    button.innerHTML = `<strong>${def.name}</strong><small>${SPEED_LABEL[def.speed]} · ${def.target === "self" ? "自身" : def.target === "enemy" ? "敵" : def.target === "empty" ? "空きマス" : "味方"}が対象</small>`;
+    button.innerHTML = `<strong>${def.name}</strong><small>${def.target === "self" ? "自身" : def.target === "enemy" ? "敵" : def.target === "empty" ? "空きマス" : "味方"}が対象</small>`;
     const reason = document.createElement("small");
     reason.textContent = result.targets.length ? `対象 ${result.targets.length}件` : result.reason;
     button.appendChild(reason);
-    button.setAttribute("aria-label", `${actor.name}の${def.name}、${SPEED_LABEL[def.speed]}、${cardCategorySummary(def)}。${result.reason}。残り${3 - game.queue.length}命令`);
+    button.setAttribute("aria-label", `${actor.name}の${def.name}、${cardCategorySummary(def)}。${result.reason}。残り${3 - game.queue.length}命令`);
     button.addEventListener("click", () => {
       actorChoice = "technique";
       selectCard(card.instanceId, true);
@@ -1011,20 +1079,20 @@ function handleCellClick(x, y) {
   if (game.mode === "move") {
     action = {
       instance: card, cardId: card.cardId, mode: "move", actorId: game.moveUnitId,
-      target: { x, y }, speed: "fast", label: `${getUnit(game.moveUnitId).name}：移動`
+      target: { x, y }, speed: UNIFORM_SPEED, label: `${getUnit(game.moveUnitId).name}：移動`
     };
   } else if (!owner || owner.hp <= 0) {
     const target = simUnitAt(selectionState, x, y);
     const legacy = getLegacy(def.ownerId);
     action = {
       instance: card, cardId: card.cardId, mode: "legacy", actorId: def.ownerId,
-      targetId: target?.id, speed: legacy.speed, label: legacy.name
+      targetId: target?.id, speed: UNIFORM_SPEED, label: legacy.name
     };
   } else {
     const targetUnit = simUnitAt(selectionState, x, y);
     action = {
       instance: card, cardId: card.cardId, mode: "technique", actorId: def.ownerId,
-      targetId: targetUnit?.id || null, target: { x, y }, speed: def.speed,
+      targetId: targetUnit?.id || null, target: { x, y }, speed: UNIFORM_SPEED,
       label: `${owner.name}：${def.name}`
     };
   }
@@ -1056,6 +1124,7 @@ function undoLast() {
   clearSelection();
   actorChoice = null;
   render();
+  recordPlaylog("planEdit", () => "undo");
 }
 
 function queueReturnEligible() {
@@ -1102,35 +1171,39 @@ function returnCancelledQueueAction(instanceId, planToken, sourceButton = null) 
       || entry.outcome?.summary !== next?.summary;
   });
   const label = item.action.mode === "move" ? item.action.label : cardDefs[item.action.cardId]?.name || item.action.label;
-  queueReturnMessage = `${String(item.index + 1).padStart(2, "0")} ${label}を手札へ戻しました。残り${game.queue.length}件を再予測しました。${changed ? "後続命令の予測が変わりました。" : "後続命令の結果を確認してください。"}`;
+  queueReturnMessage = `${allySlotLabel(item.index + 1)} ${label}を手札へ戻しました。後ろの命令は一つ前の番号に繰り上がり、残り${game.queue.length}件を再予測しました。${changed ? "後続命令の予測が変わりました。" : "後続命令の結果を確認してください。"}`;
   render();
   el.queueTitle.focus({ preventScroll: true });
   el.queueTitle.scrollIntoView({ block: "nearest" });
+  recordPlaylog("planEdit", () => "return");
   return true;
 }
 
+// Fixed six-slot rhythm: ally ①, enemy ①, ally ②, enemy ②, ally ③, enemy ③. Empty slots create no event and are skipped.
 function buildResolutionEvents(queue = game.queue, intents = game.intents) {
   return [
     ...queue.map((action, order) => ({
       kind: "player",
-      speed: action.speed,
+      speed: UNIFORM_SPEED,
       order,
+      slot: order + 1,
+      rank: order * 2,
       key: `player-${action.instance.instanceId}`,
       payload: action
     })),
-    ...intents.map((enemyIntent, order) => ({
-      kind: "enemy",
-      speed: enemyIntent.speed,
-      order,
-      key: `enemy-${enemyIntent.actorId}-${enemyIntent.id}`,
-      payload: enemyIntent
-    }))
-  ].sort(compareResolutionEvents);
-}
-
-function compareResolutionEvents(a, b) {
-  return SPEED_ORDER[a.speed] - SPEED_ORDER[b.speed]
-    || (a.kind === b.kind ? a.order - b.order : a.kind === "player" ? -1 : 1);
+    ...intents.map((enemyIntent, order) => {
+      const slot = enemyIntent.slot ?? ENEMY_SLOT[enemyIntent.id] ?? order + 1;
+      return {
+        kind: "enemy",
+        speed: UNIFORM_SPEED,
+        order,
+        slot,
+        rank: (slot - 1) * 2 + 1,
+        key: `enemy-${enemyIntent.actorId}-${enemyIntent.id}`,
+        payload: enemyIntent
+      };
+    })
+  ].sort((a, b) => a.rank - b.rank);
 }
 
 function cloneCombatState(source = game) {
@@ -1652,6 +1725,7 @@ async function executeTurn() {
   closeTurnGuide(false);
   clearMovementReading(true);
   const forecast = predictTimeline();
+  recordPlaylog("commit", () => ({ turn: game.turn, handOrder: game.hand.map(card => card.instanceId), queue: game.queue.map(Order3Notes.queueRecord) }));
   game.activeForecast = forecast;
   game.phase = "resolving";
   clearSelection();
@@ -1670,9 +1744,15 @@ async function executeTurn() {
     await pause(420);
   }
 
-  game.timelineCursor = events.length;
+  completeResolvedTurn(forecast);
+}
+
+// Post-resolution bookkeeping shared by live execution and log replay. The combat state already equals the forecast's last snapshot.
+function completeResolvedTurn(forecast) {
+  game.timelineCursor = forecast.events.length;
   game.lastResolvedState = cloneCombatState(game);
   renderTimeline();
+  recordPlaylog("turnResolved", () => playlogTurnResult(forecast));
 
   if (battleResult()) {
     finishBattle(battleResult());
@@ -1690,6 +1770,7 @@ async function executeTurn() {
   game.phase = "planning";
   addLog(`TURN ${String(game.turn).padStart(2, "0")}：新しい予告を確認。`, true);
   render();
+  recordPlaylog("turnStart", playlogTurnStart);
 }
 
 // The same pure event resolver drives the timeline and any direct execution call.
@@ -1708,11 +1789,11 @@ function resolveStandaloneEvent(event) {
 }
 
 async function resolvePlayerAction(action) {
-  return resolveStandaloneEvent({ kind: "player", key: `player-${action.instance.instanceId}`, speed: action.speed, payload: action });
+  return resolveStandaloneEvent({ kind: "player", key: `player-${action.instance.instanceId}`, speed: UNIFORM_SPEED, slot: 1, payload: action });
 }
 
 async function resolveEnemyIntent(enemyIntent) {
-  return resolveStandaloneEvent({ kind: "enemy", key: `enemy-${enemyIntent.actorId}-${enemyIntent.id}`, speed: enemyIntent.speed, payload: enemyIntent });
+  return resolveStandaloneEvent({ kind: "enemy", key: `enemy-${enemyIntent.actorId}-${enemyIntent.id}`, speed: UNIFORM_SPEED, slot: enemyIntent.slot ?? ENEMY_SLOT[enemyIntent.id], payload: enemyIntent });
 }
 
 function flash(unitId) {
@@ -1955,8 +2036,8 @@ function renderEnemyTrace(trace) {
   const attackText = evidence ? (evidence.attack.performed ? "攻撃あり" : "攻撃なし") : "";
   const drainText = event.payload.id === "drain" ? "詠唱師自身を最大2回復。" : "";
   el.enemyTrace.hidden = false;
-  el.enemyTrace.innerHTML = `<div class="enemy-trace-heading"><strong>予告トレース｜${String(trace.index + 1).padStart(2, "0")} ${escapeEffectText(view.name)}「${escapeEffectText(view.action)}」</strong><button type="button" id="enemy-trace-close" aria-label="敵の予告トレースを閉じる">閉じる ×</button></div>
-    <p>${escapeEffectText(SPEED_LABEL[event.speed])} · ${escapeEffectText(enemyTraceFlow(event.payload.id))}</p>
+  el.enemyTrace.innerHTML = `<div class="enemy-trace-heading"><strong>予告トレース｜${eventSlotLabel(event)} ${escapeEffectText(view.name)}「${escapeEffectText(view.action)}」</strong><button type="button" id="enemy-trace-close" aria-label="敵の予告トレースを閉じる">閉じる ×</button></div>
+    <p>${escapeEffectText(enemyTraceFlow(event.payload.id))}</p>
     <p>開始 ${point(actor)} → 停止 ${point(stop)}${path.length ? `（進入 ${path.map(point).join(" → ")}）` : "（進入なし）"}。対象予告：${escapeEffectText(targetText)}。</p>
     <p>この計画の予測：${escapeEffectText(actionResult)}${stopReason ? `。${stopReason}` : ""}${attackText ? `。${attackText}` : ""}。${drainText}</p>
     <p class="enemy-trace-legend">破線＝開始、番号と線＝実際の進入、太枠＝停止、赤枠＝予告対象、赤地＝設置・起爆マス。予告対象と予測結果は別です。</p>`;
@@ -2187,7 +2268,7 @@ function renderCardCategories(shown, moveMode) {
 function cardAriaLabel(def, shown, isLegacy, selected, moveMode) {
   const ownerName = ownerMeta[def.ownerId].name;
   const modeText = moveMode ? "ALT移動として選択中。" : selected ? "技法として選択中。" : "";
-  return `${ownerName}、${shown.name}、${SPEED_LABEL[shown.speed]}。${cardTargetLabel(shown)}。${cardFaceEffect(shown)}${modeText} 詳細はカード選択後と遊び方で確認できます。`;
+  return `${ownerName}、${shown.name}。${cardTargetLabel(shown)}。${cardFaceEffect(shown)}${modeText} 詳細はカード選択後と遊び方で確認できます。`;
 }
 
 function cardTargetLabel(shown) {
@@ -2227,7 +2308,7 @@ function renderHand() {
       <p>${cardFaceEffect(shown)}</p>
       <div class="card-bottom">
         <span class="card-move${moveMode ? " active-use-mode" : ""}">${moveMode ? "移動命令として使用中" : "ALTで移動"}</span>
-        ${isLegacy ? `<span class="legacy-tag">LEGACY · FAST</span>` : `<span class="speed ${shown.speed}">${SPEED_LABEL[shown.speed]}</span>`}
+        ${isLegacy ? `<span class="legacy-tag">LEGACY</span>` : ""}
       </div>
     `;
     button.addEventListener("click", () => selectCard(instance.instanceId));
@@ -2235,32 +2316,44 @@ function renderHand() {
   }
 }
 
+// Always three enemy order slots ①②③, fixed before planning. An empty slot names the defeated enemy that owns it.
 function renderIntents() {
   el.intents.innerHTML = "";
   const forecastState = displayTimelineState();
-  for (const item of game.intents) {
+  const resolvingEvent = game.phase === "resolving" ? game.activeForecast?.events[game.timelineCursor] : null;
+  for (let slot = 1; slot <= 3; slot += 1) {
+    const item = game.intents.find(entry => (entry.slot ?? ENEMY_SLOT[entry.id]) === slot);
+    const card = document.createElement("article");
+    card.dataset.enemySlot = String(slot);
+    const badge = `<span class="enemy-slot-badge">${enemySlotLabel(slot)}</span>`;
+    if (!item) {
+      const owner = getUnit(enemySlotOwner(slot));
+      card.className = "intent-card empty";
+      card.innerHTML = `${badge}<p class="intent-empty">なし${owner ? `（${owner.name}は撃破済み）` : ""}</p>`;
+      el.intents.appendChild(card);
+      continue;
+    }
     const actor = getUnit(item.actorId);
-    if (!actor || (actor.hp <= 0 && item.id !== "detonate")) continue;
     const target = item.targetId ? getUnit(item.targetId) : null;
     const shownActor = forecastState?.units.find(unit => unit.id === actor.id) || actor;
-    const cellTarget = item.targetKind === "cells"
-      ? `TARGET：マス ${item.cells?.map(cell => `(${cell.x + 1},${cell.y + 1})`).join(" / ") || "なし"}`
-      : null;
-    const card = document.createElement("article");
-    card.className = "intent-card";
+    const targetText = item.targetKind === "cells"
+      ? (item.cells?.length ? `→ マス${item.cells.length}つ` : "→ マスなし")
+      : target && target.id !== actor.id ? `→ ${target.name}` : "→ 自身";
+    const current = resolvingEvent?.kind === "enemy" && resolvingEvent.key === `enemy-${item.actorId}-${item.id}`;
+    card.className = `intent-card${current ? " current" : ""}`;
+    if (current) card.setAttribute("aria-current", "step");
     card.innerHTML = `
+      ${badge}
       <div class="intent-icon">${actor.icon}</div>
-      <div>
+      <div class="intent-body">
         <h3><span>${actor.name}｜${item.name}</span><b class="intent-hp${shownActor.hp !== actor.hp ? " changed" : ""}">HP ${shownActor.hp !== actor.hp ? `${actor.hp}→${shownActor.hp}` : `${actor.hp}/${actor.maxHp}`}</b></h3>
-        <p>${item.description}</p>
-        <p class="intent-target">${cellTarget || (target ? `TARGET：${target.name}` : "TARGET：自身")}</p>
+        <p class="intent-effect">${item.description}</p>
+        <p class="intent-target">${targetText}</p>
         ${renderEffectDetails(item.id, `intent-${item.actorId}`)}
       </div>
-      <span class="speed ${item.speed}">${SPEED_LABEL[item.speed]}</span>
     `;
     el.intents.appendChild(card);
   }
-  if (!el.intents.children.length) el.intents.innerHTML = `<p class="command-copy">敵の行動なし</p>`;
 }
 
 function renderSquad() {
@@ -2293,16 +2386,16 @@ function renderQueue() {
     slot.className = `queue-slot${action ? " filled" : ""}`;
     const outcome = action && forecast ? cancelledQueueOutcome(forecast, action) : null;
     slot.innerHTML = action
-      ? `<span class="queue-number">0${i + 1}</span>${action.label} <span class="speed ${action.speed}">${SPEED_LABEL[action.speed]}</span>
+      ? `<span class="queue-number">${allySlotLabel(i + 1)}</span>${action.label}
         ${outcome ? `<span class="queue-prediction${outcome.status === "cancelled" ? " cancelled" : ""}">予測：${outcome.status === "cancelled" ? `取消・${escapeEffectText(outcome.reason)}` : escapeEffectText(outcome.summary)}</span>` : ""}`
-      : `<span class="queue-number">0${i + 1}</span>命令待機`;
+      : `<span class="queue-number">${allySlotLabel(i + 1)}</span>命令待機`;
     if (action && canReturn && i < game.queue.length - 1 && outcome?.status === "cancelled") {
       const button = document.createElement("button");
       button.type = "button";
       button.className = "queue-return-button";
       button.dataset.returnInstanceId = action.instance.instanceId;
       button.textContent = "取消命令を外して手札へ戻す";
-      button.setAttribute("aria-label", `登録順${String(i + 1).padStart(2, "0")} ${action.label}、予測で取消、理由：${outcome.reason}。手札へ戻す`);
+      button.setAttribute("aria-label", `${allySlotLabel(i + 1)} ${action.label}、予測で取消、理由：${outcome.reason}。手札へ戻す`);
       button.addEventListener("click", () => returnCancelledQueueAction(action.instance.instanceId, planToken, button));
       slot.appendChild(button);
     }
@@ -2368,7 +2461,7 @@ function renderEffectDetails(id, location, indexEntry = false) {
   if (!effect) return "";
   const disclosure = `${location}-${id}`;
   return `<details class="effect-details" data-effect-id="${id}" data-disclosure="${disclosure}"${openEffectDisclosures.has(disclosure) ? " open" : ""}>
-    <summary>${indexEntry ? `${effect.name} · ${SPEED_LABEL[effect.speed]}` : `効果詳細：${effect.name}`}</summary>
+    <summary>${indexEntry ? (effect.group === "enemy" ? `${effect.name} · ${enemySlotLabel(ENEMY_SLOT[id])}` : effect.name) : `効果詳細：${effect.name}`}</summary>
     <div class="effect-rules">
       <h4>効果の規則</h4><p>${effect.short}</p>
       ${effect.detail.map(text => `<p>${text}</p>`).join("")}
@@ -2405,9 +2498,26 @@ function renderTimeline() {
   const events = selection?.events || forecast?.events || buildResolutionEvents();
   el.timeline.innerHTML = "";
 
-  if (!events.length) {
-    el.timeline.innerHTML = `<div class="timeline-empty">行動はまだありません</div>`;
-  }
+  // Three fixed pairs (ally n, enemy n) in resolution order. Cells without an event are plain text, not buttons.
+  const cells = new Map();
+  const pairs = [1, 2, 3].map(number => {
+    const row = document.createElement("div");
+    row.className = "timeline-pair";
+    row.setAttribute("role", "group");
+    row.setAttribute("aria-label", `第${number}組`);
+    for (const kind of ["player", "enemy"]) {
+      const label = kind === "enemy" ? enemySlotLabel(number) : allySlotLabel(number);
+      const empty = document.createElement("div");
+      empty.className = `timeline-empty-slot ${kind}`;
+      empty.dataset.slotKind = kind;
+      empty.dataset.slot = String(number);
+      empty.innerHTML = `<span class="timeline-index">${label}</span><span class="timeline-empty-text">${kind === "enemy" ? "なし" : "未登録"}</span>`;
+      row.appendChild(empty);
+      cells.set(`${kind}-${number}`, empty);
+    }
+    el.timeline.appendChild(row);
+    return row;
+  });
 
   events.forEach((event, index) => {
     const view = timelineEventView(event);
@@ -2421,20 +2531,16 @@ function renderTimeline() {
     const isCurrent = game.phase === "resolving" && index === game.timelineCursor;
     const isSelected = provisional || (game.phase === "planning" && !selection && (trace?.event.key === event.key || game.previewIndex === index));
     const cancelled = outcome ? outcome.status === "cancelled" : !view.canAct;
-    const sideLabel = event.kind === "enemy" ? "ENEMY" : "ALLY";
-    const spokenSide = event.kind === "enemy" ? "敵" : "味方";
     const targetLabel = timelineTargetLabel(event);
     const effectText = effectCatalog[effectIdForEvent(event)]?.short || event.payload.description || "";
     const resultLabel = timelineResultLabel(provisional, outcome, selection, index);
-    const orderLabel = String(index + 1).padStart(2, "0");
+    const orderLabel = eventSlotLabel(event);
     step.className = `timeline-step ${event.kind}${provisional ? " provisional" : ""}${isDone ? " done" : ""}${isCurrent ? " current" : ""}${isSelected ? " selected" : ""}${cancelled ? " cancelled" : ""}`;
     step.dataset.eventKey = event.key;
     step.setAttribute("aria-label", [
-      `順番${orderLabel}`,
-      spokenSide,
+      orderLabel,
       view.name,
       view.action,
-      SPEED_LABEL[event.speed],
       `対象${targetLabel}`,
       effectText,
       event.kind === "enemy" ? "予告トレースと効果詳細を開く" : "効果詳細を開く",
@@ -2448,10 +2554,8 @@ function renderTimeline() {
     if (isCurrent) step.setAttribute("aria-current", "step");
     step.innerHTML = `
       <span class="timeline-index">${orderLabel}</span>
-      <span class="timeline-side">${sideLabel}</span>
       <span class="timeline-name">${view.name}</span>
       <span class="timeline-action">${cancelled ? "取消：" : ""}${view.action}</span>
-      <span class="speed ${event.speed}">${SPEED_LABEL[event.speed]}</span>
       <span class="timeline-target">対象：${targetLabel}</span>
       <span class="timeline-result${outcome ? " predicted" : ""}">${resultLabel}</span>
     `;
@@ -2469,7 +2573,9 @@ function renderTimeline() {
       render();
       el.timeline.querySelector?.(`[data-event-key="${event.key}"]`)?.focus({ preventScroll: true });
     });
-    el.timeline.appendChild(step);
+    const placeholder = cells.get(`${event.kind}-${event.slot}`);
+    if (placeholder) placeholder.replaceWith(step);
+    else pairs[pairs.length - 1].appendChild(step);
   });
 
   renderTimelineDetail(selection, forecast, events);
@@ -2505,7 +2611,7 @@ function movementPositionOrigin(forecast, index, occupied) {
 function movementEventLabel(forecast, index) {
   const event = forecast.events[index];
   const view = timelineEventView(event);
-  return `${String(index + 1).padStart(2, "0")} ${view.name}「${view.action}」`;
+  return `${eventSlotLabel(event)} ${view.name}「${view.action}」`;
 }
 
 function renderMovementEvidence(forecast, index) {
@@ -2622,7 +2728,7 @@ function renderTimelineDetail(selection, forecast, events) {
   if (selection) {
     el.timelineDetail.hidden = false;
     el.timelineDetail.innerHTML = `
-      <div class="timeline-detail-title"><span>この命令の直前</span><b>ORDER ${String(selection.eventIndex + 1).padStart(2, "0")} / ${SPEED_LABEL[selection.action.speed]}</b></div>
+      <div class="timeline-detail-title"><span>この命令の直前</span><b>${eventSlotLabel(selection.events[selection.eventIndex])}</b></div>
       <p>この時点の位置・HP・状態から対象を選択します。対象確定後に後続イベントを再予測します。</p>
       ${renderEffectDetails(effectIdForEvent(selection.events[selection.eventIndex]), "selection")}
     `;
@@ -2640,7 +2746,7 @@ function renderTimelineDetail(selection, forecast, events) {
   const view = timelineEventView(event);
   el.timelineDetail.hidden = false;
   el.timelineDetail.innerHTML = `
-    <div class="timeline-detail-title" id="timeline-detail-heading" tabindex="-1"><span>TURN ${String(game.turn).padStart(2, "0")} · ${String(detailIndex + 1).padStart(2, "0")} ${view.name}｜${view.action}</span><b>${outcome ? (game.phase === "planning" ? "現在計画の予測・行動直後" : "実行・行動直後") : "効果説明"}</b></div>
+    <div class="timeline-detail-title" id="timeline-detail-heading" tabindex="-1"><span>TURN ${String(game.turn).padStart(2, "0")} · ${eventSlotLabel(event)} ${view.name}｜${view.action}</span><b>${outcome ? (game.phase === "planning" ? "現在計画の予測・行動直後" : "実行・行動直後") : "効果説明"}</b></div>
     ${renderMovementReturn(forecast, detailIndex)}
     ${renderEffectDetails(effectIdForEvent(event), "timeline")}
     <h4 class="prediction-title">この計画の予測結果</h4>
@@ -2701,6 +2807,11 @@ function renderLog() {
   `).join("");
 }
 
+function previewSlotText() {
+  const event = currentForecast()?.events[game.previewIndex];
+  return event ? eventSlotLabel(event) : "選んだ行動";
+}
+
 function renderControls() {
   el.turn.textContent = String(game.turn).padStart(2, "0");
   const card = selectedCard();
@@ -2723,7 +2834,7 @@ function renderControls() {
       ? "命令と敵の行動を解決しています…"
       : game.queue.length
         ? (Number.isInteger(game.previewIndex)
-          ? `行動順 ${String(game.previewIndex + 1).padStart(2, "0")} の直後を予測表示中。`
+          ? `${previewSlotText()}の直後を予測表示中。`
           : "全行動後の結果を予測表示中。カードを選ぶと命令を追加できます。")
         : "カードを選び、対象を指定してください。";
     return;
@@ -2745,7 +2856,7 @@ function renderControls() {
       if (!legacy && owner.hp > 0 && (!selectionOwner || selectionOwner.hp <= 0)) {
         const causeEvent = firstPriorDefeatEvent(selectionContext, def.ownerId, owner.hp);
         const causeText = causeEvent
-          ? `先行する${SPEED_LABEL[causeEvent.speed]}「${timelineEventView(causeEvent).action}」で戦闘不能になります。`
+          ? `先に解決する「${eventCauseLabel(causeEvent)}」で戦闘不能になります。`
           : "この命令の直前に戦闘不能です。";
         el.modeHelp.textContent = `実行不能：${owner.name}は${causeText}前の命令で守る／移動するか、別カード、「移動命令に変換」、または選択解除で組み直せます。`;
         el.instruction.textContent = "命令者が先に戦闘不能になります。行動順か命令を組み直してください。";
@@ -2758,7 +2869,7 @@ function renderControls() {
     }
     el.modeHelp.textContent = legacy
       ? "持ち主が倒れたため、遺志として使用"
-      : `${SPEED_LABEL[shown.speed]}で解決。効果詳細は実行順の下で確認できます。`;
+      : `${allySlotLabel(game.queue.length + 1)}として解決（${enemySlotLabel(game.queue.length + 1)}の直前）。効果詳細は行動予測の下で確認できます。`;
     el.instruction.textContent = `この命令の直前：${shown.name}の対象を選んでください。`;
   }
 }
@@ -2881,7 +2992,7 @@ function showHelp() {
       : previous?.screen === "initial" ? `<p>操作案内は戦闘開始後に開けます。</p>` : ""}
     <div class="brief-step"><b>1</b><span>盤面の生存味方を選び、手札の技かALT移動を選びます。</span></div>
     <div class="brief-step"><b>2</b><span>光る対象を選び、敵の予告に対して1～3命令を登録します。</span></div>
-    <div class="brief-step"><b>3</b><span>FAST → NORMAL → SLOWの予測を見て作戦実行。敵を全員倒せば勝利、味方が全員倒れると敗北です。</span></div>
+    <div class="brief-step"><b>3</b><span>味方①→敵①→味方②→敵②→味方③→敵③ の予測を見て作戦実行。敵を全員倒せば勝利、味方が全員倒れると敗北です。</span></div>
     <p>一時効果は装甲・足止め・目印の3つです。いずれもターン末に消えます。駒の状態を選ぶと詳細を確認できます。</p>
     <p>カード表面は対象・射程・数値を短く表示し、技の「効果詳細」とこのHelpで完全な規則を確認できます。</p>
     <details class="help-section"><summary>距離と移動・命令</summary>${["distance", "targets", "orders"].map(renderRuleDetails).join("")}${renderEffectDetails("move", "help", true)}</details>
@@ -3074,11 +3185,229 @@ function capturePlaytestScene() {
       mode: game.mode, moveUnitId: game.moveUnitId } : null,
     orders: game.queue.slice(0, 3).map((action, index) => ({
       index: index + 1, cardId: action.cardId, actor: getUnit(action.actorId)?.name || action.actorId,
-      action: action.label, mode: action.mode, speed: SPEED_LABEL[action.speed],
+      action: action.label, mode: action.mode, speed: allySlotLabel(index + 1),
       target: timelineTargetLabel({ kind: "player", payload: action })
     })),
     preview
   };
+}
+
+// Id-based comment scene for the play log, captured when the comment dialog opens. Reads only; never changes game or rng.
+function captureCommentContext() {
+  const card = game.hand.find(item => item.instanceId === game.selectedInstanceId);
+  const selectionContext = game.phase === "planning" ? selectionTimelineContext() : null;
+  let preview = { kind: "current", eventIndex: null, eventKey: null };
+  if (game.phase === "resolving") {
+    const index = game.timelineCursor;
+    preview = { kind: "resolving", eventIndex: index >= 0 ? index : null, eventKey: game.activeForecast?.events[index]?.key || null };
+  } else if (selectionContext) {
+    preview = { kind: "selection-before", eventIndex: selectionContext.eventIndex,
+      eventKey: selectionContext.events[selectionContext.eventIndex]?.key || null };
+  } else if (game.phase === "planning" && game.queue.length) {
+    const index = game.previewIndex;
+    preview = Number.isInteger(index)
+      ? { kind: "event-after", eventIndex: index, eventKey: buildResolutionEvents()[index]?.key || null }
+      : { kind: "final", eventIndex: null, eventKey: null };
+  }
+  return {
+    turn: game.turn,
+    phase: game.phase,
+    context: {
+      selection: card ? { instanceId: card.instanceId, cardId: card.cardId, mode: game.mode, moveUnitId: game.moveUnitId ?? null } : null,
+      queue: game.queue.map(Order3Notes.queueRecord),
+      preview,
+      battle: game.phase === "ended" ? battleResult() : null
+    }
+  };
+}
+
+// Rebuilds recorded queue records into the same action shape handleCellClick creates, checking legality against the same selection state.
+function replayRebuildQueue(records, handOrder = null) {
+  const available = new Map(game.hand.map(card => [card.instanceId, card]));
+  const startIds = game.hand.map(card => card.instanceId);
+  if (handOrder) {
+    const ids = [...handOrder, ...records.map(record => record.instanceId)];
+    if (ids.length !== startIds.length || new Set(ids).size !== ids.length || ids.some(id => !available.has(id))) {
+      return { divergence: { path: "handOrder", expected: startIds, actual: ids } };
+    }
+  }
+  game.queue = [];
+  for (const [index, record] of records.entries()) {
+    const path = `queue[${index}]`;
+    const card = available.get(record.instanceId);
+    if (!card || !game.hand.includes(card)) return { divergence: { path: `${path}.instanceId`, expected: game.hand.map(item => item.instanceId), actual: record.instanceId } };
+    const def = cardDefs[card.cardId];
+    const owner = getUnit(def.ownerId);
+    const mode = record.mode === "move" ? "move" : !owner || owner.hp <= 0 ? "legacy" : "technique";
+    if (record.mode !== mode) return { divergence: { path: `${path}.mode`, expected: mode, actual: record.mode } };
+    const selection = { card, mode: mode === "move" ? "move" : "technique", moveUnitId: mode === "move" ? record.actorId : null };
+    const context = selectionTimelineContext(selection);
+    const cells = context ? validCells(context, selection) : [];
+    const legal = cell => Boolean(cell) && cells.some(item => item.x === cell.x && item.y === cell.y);
+    let action;
+    if (mode === "move") {
+      const mover = getUnit(record.actorId);
+      if (mover?.side !== "player" || !legal(record.target)) return { divergence: { path: `${path}.target`, expected: cells, actual: record.target } };
+      action = { instance: card, cardId: card.cardId, mode, actorId: mover.id, target: { x: record.target.x, y: record.target.y }, speed: UNIFORM_SPEED, label: `${mover.name}：移動` };
+    } else if (mode === "legacy") {
+      const target = context && record.targetId ? simGetUnit(context.state, record.targetId) : null;
+      if (!target || target.hp <= 0 || !legal(target)) return { divergence: { path: `${path}.targetId`, expected: cells, actual: record.targetId } };
+      const legacy = getLegacy(def.ownerId);
+      action = { instance: card, cardId: card.cardId, mode, actorId: def.ownerId, targetId: target.id, speed: UNIFORM_SPEED, label: legacy.name };
+    } else {
+      if (!legal(record.target)) return { divergence: { path: `${path}.target`, expected: cells, actual: record.target } };
+      const target = simUnitAt(context.state, record.target.x, record.target.y);
+      action = { instance: card, cardId: card.cardId, mode, actorId: def.ownerId, targetId: target?.id || null,
+        target: { x: record.target.x, y: record.target.y }, speed: UNIFORM_SPEED, label: `${owner.name}：${def.name}` };
+    }
+    const difference = Order3Notes.firstDifference(record, Order3Notes.queueRecord(action));
+    if (difference) return { divergence: { ...difference, path: `${path}.${difference.path}` } };
+    game.hand = game.hand.filter(item => item !== card);
+    game.queue.push(action);
+  }
+  if (handOrder) game.hand = handOrder.map(id => available.get(id));
+  return { divergence: null };
+}
+
+function replayView(start, forecast, eventIndex = null) {
+  const limit = Number.isInteger(eventIndex) ? eventIndex + 1 : forecast?.snapshots.length || 0;
+  const snapshots = forecast ? forecast.snapshots.slice(0, limit) : [];
+  return Order3Notes.clone({
+    turn: start.turn,
+    start: start.start,
+    handOrder: game.hand.map(card => card.instanceId),
+    queue: game.queue.map(Order3Notes.queueRecord),
+    events: forecast ? forecast.events.map(event => ({ key: event.key, kind: event.kind, speed: event.speed })) : [],
+    eventIndex,
+    snapshots,
+    outcome: Number.isInteger(eventIndex) ? forecast?.snapshots[eventIndex]?.outcome || null : null,
+    movement: snapshots.filter(snapshot => snapshot.outcome.movementEvidence)
+      .map(snapshot => ({ eventKey: snapshot.eventKey, evidence: snapshot.outcome.movementEvidence })),
+    final: forecast ? forecast.final : cloneCombatState(game)
+  });
+}
+
+function replayCommentView(start, comment) {
+  const { selection, preview } = comment.context;
+  const rebuilt = replayRebuildQueue(comment.context.queue);
+  if (rebuilt.divergence) return { divergence: { ...rebuilt.divergence, path: `context.${rebuilt.divergence.path}` } };
+  if (selection) {
+    const card = game.hand.find(item => item.instanceId === selection.instanceId && item.cardId === selection.cardId);
+    if (!card) return { divergence: { path: "context.selection.instanceId", expected: game.hand.map(item => item.instanceId), actual: selection.instanceId } };
+    game.selectedInstanceId = card.instanceId;
+    game.mode = selection.mode;
+    game.moveUnitId = selection.moveUnitId;
+  }
+  game.previewIndex = preview.kind === "event-after" ? preview.eventIndex : null;
+  const scene = captureCommentContext().context.preview;
+  const difference = Order3Notes.firstDifference(preview, scene);
+  if (difference) return { divergence: { ...difference, path: `context.preview.${difference.path}` } };
+  const forecast = game.queue.length ? predictTimeline() : null;
+  let view;
+  if (preview.kind === "selection-before") {
+    const context = selectionTimelineContext();
+    view = { state: context.state, snapshots: context.snapshots };
+  } else if (preview.kind === "event-after") {
+    view = { state: forecast.snapshots[preview.eventIndex].state, snapshots: forecast.snapshots.slice(0, preview.eventIndex + 1) };
+  } else if (preview.kind === "final") {
+    view = { state: forecast.final, snapshots: forecast.snapshots };
+  } else {
+    view = { state: cloneCombatState(game), snapshots: [] };
+  }
+  return { divergence: null, state: Order3Notes.clone({ ...replayView(start, forecast), commentId: comment.commentId, phase: comment.phase,
+    selection, preview, previewState: view.state, previewSnapshots: view.snapshots }) };
+}
+
+// Tool/QA replay of a recorded run: logged seed -> reconstructed hand order and queue -> predictTimeline -> completeResolvedTurn.
+// target is null (whole run), {turn, event?} or {commentId}. The recorder is suspended for the duration.
+// A turn is verified only when both its start and result checkpoints match. A committed turn without a recorded result is
+// "incomplete", and a whole run is verified only when its recorded status also equals the replayed outcome.
+function replayLoggedRun(run, target = null, options = {}) {
+  let verifiedTurns = 0;
+  let committedTurns = 0;
+  let incompleteTurns = 0;
+  const done = (status, extra = {}) => ({ status, verifiedTurns, committedTurns, incompleteTurns, divergence: null, state: null, reason: "", ...extra });
+  const diverged = (turn, phase, difference, prefix = "") => done("diverged", {
+    divergence: { turn, phase, path: `${prefix}${difference.path}`, expected: difference.expected, actual: difference.actual } });
+  const check = Order3Notes.validateRun(run);
+  if (!check.ok) return done("not-replayable", { reason: `invalid run: ${check.errors[0] || "schema"}` });
+  if (run.gameVersion !== GAME_VERSION && !options.force) return done("version-mismatch", { reason: `log ${run.gameVersion}, product ${GAME_VERSION}` });
+  committedTurns = run.turns.filter(turn => turn.commit).length;
+  if (!committedTurns) return done("not-replayable", { reason: "no committed turn" });
+  const comment = target?.commentId ? run.comments.find(item => item.commentId === target.commentId) : null;
+  if (target?.commentId && !comment) return done("not-replayable", { reason: `comment ${target.commentId} not found` });
+  const targetTurn = comment ? comment.turn : Number.isInteger(target?.turn) ? target.turn : null;
+  const eventIndex = !comment && Number.isInteger(target?.event) ? target.event : null;
+  const targetRecord = run.turns.find(turn => turn.turn === targetTurn);
+  if (targetTurn !== null && !targetRecord) return done("not-replayable", { reason: `turn ${targetTurn} not recorded` });
+  if (eventIndex !== null && !targetRecord.commit) return done("not-replayable", { reason: `turn ${targetTurn} has no committed events` });
+
+  playlog.suspended = true;
+  try {
+    resetGame(run.seed);
+    let openState = null;
+    for (const [index, record] of run.turns.entries()) {
+      const last = index === run.turns.length - 1;
+      const start = playlogTurnStart();
+      const startDifference = Order3Notes.firstDifference({ turn: record.turn, start: record.start }, start);
+      if (startDifference) return diverged(record.turn, "start", startDifference);
+      const isTarget = record.turn === targetTurn;
+      if (isTarget && comment?.phase === "planning") {
+        const scene = replayCommentView(start, comment);
+        return scene.divergence ? diverged(record.turn, "comment", scene.divergence) : done("verified", { state: scene.state });
+      }
+      if (!record.commit) {
+        if (!last) return done("not-replayable", { reason: `turn ${record.turn} has no commit but later turns exist` });
+        // The still-planning last turn has its start checked but is not counted among verifiable turns.
+        if (isTarget) return done("verified", { state: replayView(start, null) });
+        if (targetTurn === null) openState = replayView(start, null);
+        break;
+      }
+      const rebuilt = replayRebuildQueue(record.commit.queue, record.commit.handOrder);
+      if (rebuilt.divergence) return diverged(record.turn, "commit", rebuilt.divergence, "commit.");
+      const forecast = predictTimeline();
+      if (eventIndex !== null && isTarget && !forecast.snapshots[eventIndex]) return done("not-replayable", { reason: `event ${eventIndex} out of range` });
+      game.activeForecast = forecast;
+      game.phase = "resolving";
+      clearSelection();
+      game.timelineCursor = forecast.snapshots.length - 1;
+      game.previewIndex = forecast.snapshots.length - 1;
+      applyCombatState(forecast.snapshots[forecast.snapshots.length - 1].state);
+      const { turn, ...result } = playlogTurnResult(forecast);
+      const view = isTarget ? replayView(start, forecast, comment ? comment.context.preview.eventIndex : eventIndex) : null;
+      if (!record.result) {
+        // Reload during resolution or a stopped recorder: the turn replays but nothing confirms it.
+        incompleteTurns += 1;
+        return done("incomplete", { divergence: { turn: record.turn, phase: "incomplete", path: "result", expected: null, actual: result },
+          state: isTarget && !comment ? view : null, reason: `turn ${record.turn} has a commit but no recorded result` });
+      }
+      const resultDifference = Order3Notes.firstDifference(record.result, result);
+      if (resultDifference) return diverged(record.turn, "result", resultDifference, "result.");
+      completeResolvedTurn(forecast);
+      verifiedTurns += 1;
+      if (isTarget && comment?.phase === "resolving") {
+        return done("verified", { state: { ...view, commentId: comment.commentId, phase: comment.phase, preview: comment.context.preview } });
+      }
+      if (isTarget && !comment) return done("verified", { state: view });
+      if (game.phase === "ended" && !last) return done("not-replayable", { reason: `battle ended at turn ${record.turn} but later turns exist` });
+    }
+    if (targetTurn === null) {
+      const replayed = game.phase === "ended" ? battleResult() : "playing";
+      // A truncated run may have ended after its last recorded turn, so only its recorded turns can be checked. The exemption needs the
+      // full turn limit with a committed and resolved last turn, which is the only shape the recorder truncates.
+      const lastRecord = run.turns.at(-1);
+      const truncatedAtLimit = run.truncated && run.turns.length === Order3Notes.PLAYLOG_LIMITS.turns && Boolean(lastRecord.commit) && Boolean(lastRecord.result);
+      if (run.status !== replayed && !(truncatedAtLimit && replayed === "playing")) {
+        return diverged(run.turns.at(-1).turn, "status", { path: "status", expected: run.status, actual: replayed });
+      }
+    }
+    if (openState) return done("verified", { state: openState });
+    const final = { turn: game.turn, phase: game.phase, battle: battleResult(), final: cloneCombatState(game) };
+    if (comment) return done("verified", { state: Order3Notes.clone({ ...final, commentId: comment.commentId, preview: comment.context.preview }) });
+    return done("verified", { state: Order3Notes.clone(final) });
+  } finally {
+    playlog.suspended = false;
+  }
 }
 
 resetGame();
