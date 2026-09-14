@@ -1,5 +1,5 @@
 const SIZE = 6;
-const GAME_VERSION = "ACT 27";
+const GAME_VERSION = "ACT 29";
 // Play-log schema v1 still requires a speed on queue, intent and event records. All actions share this one value; nothing reads it.
 const UNIFORM_SPEED = "normal";
 // Enemy order number by action id, fixed at turn start. It keeps the enemies' relative order from the former speed rule.
@@ -253,10 +253,20 @@ const el = {
   board: document.querySelector("#battlefield"),
   interposePreview: document.querySelector("#interpose-preview"),
   interposePreviewList: document.querySelector("#interpose-preview-list"),
+  interposeRegisterList: document.querySelector("#interpose-register-list"),
   interposePreviewStatus: document.querySelector("#interpose-preview-status"),
   enemyTrace: document.querySelector("#enemy-trace"),
   statusPopover: document.querySelector("#board-status-popover"),
+  selectionStatuses: document.querySelector("#selection-statuses"),
   hand: document.querySelector("#hand"),
+  handRow: document.querySelector(".hand-row"),
+  selectionPanel: document.querySelector("#selection-panel"),
+  selectionTitle: document.querySelector("#selection-title"),
+  selectionBody: document.querySelector(".selection-body"),
+  selectionStage: document.querySelector(".selection-stage"),
+  selectionMore: document.querySelector("#selection-more"),
+  deckCount: document.querySelector("#deck-count"),
+  discardCount: document.querySelector("#discard-count"),
   actorStrip: document.querySelector("#actor-strip"),
   actorOptions: document.querySelector("#actor-options"),
   actorStatus: document.querySelector("#actor-status"),
@@ -273,6 +283,7 @@ const el = {
   pips: document.querySelector("#command-pips"),
   queue: document.querySelector("#order-queue"),
   queueTitle: document.querySelector("#order-queue-title"),
+  queueReturnList: document.querySelector("#queue-return-list"),
   queueReturnStatus: document.querySelector("#queue-return-status"),
   timeline: document.querySelector("#action-timeline"),
   timelineDetail: document.querySelector("#timeline-detail-panel"),
@@ -303,8 +314,8 @@ const turnGuide = { active: false, step: 0, announcedStep: null };
 const turnGuideSteps = [
   { title: "目的と勝敗", target: "#battlefield-heading", copy: () => `敵を全員倒せば勝利、味方が全員倒れると敗北です。現在、敵${living("enemy").length}体・味方${living("player").length}人が生存。1ターンで勝つ必要はありません。盤面の駒と実HPを見てください。` },
   { title: "敵の予告", target: "#enemy-orders-title", copy: () => "敵の命令①②③は計画前に確定しています。味方①→敵①→味方②→敵②→味方③→敵③の順に解決します。行動予測の敵の枠を開くと、その敵の移動と対象を盤面で追えます。" },
-  { title: "味方と手札", target: "#actor-picker-title", copy: () => "盤面か味方列で一人を選び、手札にある固有技を探せます。手札にない技は使えません。カード直接選択やALT移動もできます。" },
-  { title: "命令と予測", target: "#order-queue-title", copy: () => `カードと対象を自分で選んで登録します。現在${game.queue.length}件／最大3件。1件から実行でき、同じ味方へ複数命令も可能です。行動予測を見て、1手戻して組み直せます。` },
+  { title: "味方と手札", target: "#actor-picker-title", copy: () => "盤面の味方か、右の列の味方一覧で一人を選ぶと、手札にあるその味方の固有技をこの列に表示します。下の手札から直接選ぶことや、ALT移動もできます。" },
+  { title: "命令と予測", target: "#order-queue-title", copy: () => `カードと対象を選んで登録します。現在${game.queue.length}件／最大3件。1件から実行でき、同じ味方へ複数命令も可能です。左の行動予測を見て、1手戻して組み直せます。` },
   { title: "明示して実行", target: "#execute-guide-target", copy: () => game.queue.length
     ? `現在${game.queue.length}件の命令があります。「作戦実行」を自分で押すと計画を解決します。案内を終えても自動実行しません。`
     : "命令はまだ0件です。1件以上登録すると「作戦実行」を押せます。案内を終えても自動実行しません。" }
@@ -981,12 +992,10 @@ function renderActorPanel() {
   const owned = game.hand.filter(card => cardDefs[card.cardId].ownerId === actor.id);
   const status = `${actor.name}を選択中 · 残り${3 - game.queue.length}命令${full ? "。1手戻すか作戦実行してください。" : ""}`;
   if (el.actorStatus.textContent !== status) el.actorStatus.textContent = status;
-  if (!owned.length && actorChoice !== "alt-pick") {
-    const empty = document.createElement("p");
-    empty.className = "actor-note";
-    empty.textContent = "このキャラの固有技は手札にありません。ALTなら別のカードを消費できます。";
-    el.actorOptions.appendChild(empty);
-  }
+  // Buttons first with a short face (name and 対象 n件/対象なし); the longer reasons follow as notes below the buttons.
+  const notes = [];
+  const shortFace = result => result.targets.length ? `対象 ${result.targets.length}件` : full ? "命令枠なし" : "対象なし";
+  if (!owned.length && actorChoice !== "alt-pick") notes.push("このキャラの固有技は手札にありません。ALTなら別のカードを消費できます。");
   if (actorChoice !== "alt-pick") for (const card of owned) {
     const def = cardDefs[card.cardId];
     const result = full ? { targets: [], reason: "残り命令枠がありません。" } : actorTechniqueCandidate(card);
@@ -996,10 +1005,8 @@ function renderActorPanel() {
     button.setAttribute("aria-pressed", String(game.selectedInstanceId === card.instanceId && game.mode === "technique"));
     button.className = result.targets.length ? "" : "no-target";
     button.disabled = full;
-    button.innerHTML = `<strong>${def.name}</strong><small>${def.target === "self" ? "自身" : def.target === "enemy" ? "敵" : def.target === "empty" ? "空きマス" : "味方"}が対象</small>`;
-    const reason = document.createElement("small");
-    reason.textContent = result.targets.length ? `対象 ${result.targets.length}件` : result.reason;
-    button.appendChild(reason);
+    button.innerHTML = `<strong>${def.name}</strong><small>${shortFace(result)}</small>`;
+    if (!full && !result.targets.length) notes.push(`${def.name}：${result.reason}`);
     button.setAttribute("aria-label", `${actor.name}の${def.name}、${cardCategorySummary(def)}。${result.reason}。残り${3 - game.queue.length}命令`);
     button.addEventListener("click", () => {
       actorChoice = "technique";
@@ -1010,10 +1017,7 @@ function renderActorPanel() {
     el.actorOptions.appendChild(button);
   }
   if (actorChoice === "alt-pick") {
-    const note = document.createElement("p");
-    note.className = "actor-note";
-    note.textContent = "消費するカードを選択。このカードの固有技／遺志は使わず、移動に変換します。";
-    el.actorOptions.appendChild(note);
+    notes.push("消費するカードを選択。このカードの固有技／遺志は使わず、移動に変換します。");
     for (const card of game.hand) {
       const def = cardDefs[card.cardId];
       const owner = getUnit(def.ownerId);
@@ -1021,7 +1025,8 @@ function renderActorPanel() {
       const button = document.createElement("button");
       button.type = "button";
       button.dataset.altCard = card.instanceId;
-      button.textContent = `${owner.name}の${shown.name}を消費 → ${actor.name}を1マス移動`;
+      button.innerHTML = `<strong>${shown.name}</strong><small>${owner.name}のカード</small>`;
+      button.setAttribute("aria-label", `${owner.name}の${shown.name}を消費 → ${actor.name}を1マス移動`);
       button.addEventListener("click", () => {
         actorChoice = "alt-target";
         selectCard(card.instanceId, true, actor.id);
@@ -1035,7 +1040,8 @@ function renderActorPanel() {
     button.type = "button";
     button.id = "actor-alt";
     button.disabled = full || !move.targets.length;
-    button.innerHTML = `<strong>1マス移動（ALT）</strong><small>${move.targets.length ? "使うカードを次に選択" : move.reason}</small>`;
+    button.innerHTML = `<strong>1マス移動</strong><small>${move.targets.length ? "ALT・カード1枚" : full ? "命令枠なし" : "移動先なし"}</small>`;
+    if (!full && !move.targets.length) notes.push(`1マス移動（ALT）：${move.reason}`);
     button.setAttribute("aria-label", `${actor.name}を1マス移動、${move.reason}、残り${3 - game.queue.length}命令`);
     button.addEventListener("click", () => {
       actorChoice = "alt-pick";
@@ -1043,6 +1049,12 @@ function renderActorPanel() {
       el.actorStatus.focus({ preventScroll: false });
     });
     el.actorOptions.appendChild(button);
+  }
+  for (const text of notes) {
+    const note = document.createElement("p");
+    note.className = "actor-note";
+    note.textContent = text;
+    el.actorOptions.appendChild(note);
   }
 }
 
@@ -1855,6 +1867,7 @@ function pause(ms) {
 }
 
 function render() {
+  closeSpentActorView();
   const interposeCandidates = interposeCandidateForecasts();
   renderBoard(interposeCandidates);
   renderInterposeCandidates(interposeCandidates);
@@ -1866,12 +1879,17 @@ function render() {
   renderTimeline();
   renderLog();
   renderControls();
+  renderSelectionPanel();
+  renderSelectionStatuses();
+  renderPiles();
   renderTurnGuide();
+  updateSelectionMore();
 }
 
 function renderInterposeCandidates(candidates = interposeCandidateForecasts()) {
   el.interposePreview.hidden = !candidates.length;
   el.interposePreviewList.innerHTML = "";
+  el.interposeRegisterList.innerHTML = "";
   if (el.interposePreviewStatus.textContent !== interposePreviewMessage) {
     el.interposePreviewStatus.textContent = interposePreviewMessage;
   }
@@ -1904,12 +1922,14 @@ function renderInterposeCandidates(candidates = interposeCandidateForecasts()) {
     const register = document.createElement("button");
     register.type = "button";
     register.className = "interpose-candidate-register";
+    register.dataset.targetId = candidate.targetId;
     register.textContent = `${candidate.targetName}を対象に登録`;
     register.setAttribute("aria-label", `割って入るを${candidate.targetName}へ登録`);
     register.addEventListener("click", () => registerInterposeCandidate(candidate, cardId, planIdentity, register));
+    // The register buttons sit above the explanation; each candidate's long preview text stays in the list below.
     row.appendChild(preview);
-    row.appendChild(register);
     el.interposePreviewList.appendChild(row);
+    el.interposeRegisterList.appendChild(register);
   }
 }
 
@@ -2157,7 +2177,8 @@ function renderBoard(interposeCandidates = []) {
           description.textContent = [...statuses.map(([key]) => statusFullDescription(key, unit)), ...auxiliary].join(" ");
           cell.setAttribute("aria-describedby", description.id);
           cell.appendChild(description);
-          cell.addEventListener("focus", () => showStatusPopover(unit));
+          // Keyboard focus only: a tap or click also focuses the cell, and the popover would then cover the right column.
+          cell.addEventListener("focus", () => { if (cell.matches(":focus-visible")) showStatusPopover(unit); });
           cell.addEventListener("blur", () => restorePinnedStatusPopover());
         }
       }
@@ -2188,12 +2209,13 @@ function renderUnit(unit, projected = false, actual = unit, statuses = activeSta
   token.className = `unit ${unit.side}${selected}${hit}${preview}`;
   token.setAttribute("aria-hidden", "true");
   const hpChanged = actual && actual.hp !== unit.hp;
-  const hpText = hpChanged ? `${actual.hp}→${unit.hp}` : `${unit.hp}/${unit.maxHp}`;
+  // Parts in spans so small cells can show only the current HP at 10px (the previous value and the maximum hide there).
+  const hpText = hpChanged ? `<span class="hp-was">${actual.hp}→</span>${unit.hp}` : `${unit.hp}<span class="hp-max">/${unit.maxHp}</span>`;
   token.innerHTML = `
     <div class="unit-icon">${unit.icon}</div>
     <div class="unit-name">${unit.name}</div>
     <div class="hp-track"><div class="hp-fill" style="width:${(unit.hp / unit.maxHp) * 100}%"></div></div>
-    <div class="unit-hp-number${hpChanged ? " changed" : ""}"><span>HP</span> ${hpText}</div>
+    <div class="unit-hp-number${hpChanged ? " changed" : ""}">${hpText}</div>
   `;
   if (statuses.length || auxiliaryStatusDetails(unit).length) {
     const surface = document.createElement("div");
@@ -2208,17 +2230,14 @@ function renderUnit(unit, projected = false, actual = unit, statuses = activeSta
       } else {
         chip.textContent = meta.short(unit);
       }
-      chip.addEventListener("mouseenter", () => showStatusPopover(unit, key));
-      chip.addEventListener("mouseleave", () => restorePinnedStatusPopover());
+      chip.addEventListener("pointerenter", event => { if (event.pointerType === "mouse") showStatusPopover(unit, key); });
+      chip.addEventListener("pointerleave", event => { if (event.pointerType === "mouse") restorePinnedStatusPopover(); });
       surface.appendChild(chip);
     });
-    surface.addEventListener("click", event => {
-      event.preventDefault();
-      event.stopPropagation();
-      showStatusPopover(unit, null, true);
-    });
-    token.addEventListener("mouseenter", () => showStatusPopover(unit));
-    token.addEventListener("mouseleave", () => restorePinnedStatusPopover());
+    // act-29-fix-02: a tap or click anywhere on the token (chips included) goes to the cell, i.e. selects the ally or the
+    // target. The status text shows on mouse hover, on keyboard focus and in the right column (renderSelectionStatuses).
+    token.addEventListener("pointerenter", event => { if (event.pointerType === "mouse") showStatusPopover(unit); });
+    token.addEventListener("pointerleave", event => { if (event.pointerType === "mouse") restorePinnedStatusPopover(); });
     token.appendChild(surface);
   }
   return token;
@@ -2267,8 +2286,9 @@ function renderCardCategories(shown, moveMode) {
 
 function cardAriaLabel(def, shown, isLegacy, selected, moveMode) {
   const ownerName = ownerMeta[def.ownerId].name;
-  const modeText = moveMode ? "ALT移動として選択中。" : selected ? "技法として選択中。" : "";
-  return `${ownerName}、${shown.name}。${cardTargetLabel(shown)}。${cardFaceEffect(shown)}${modeText} 詳細はカード選択後と遊び方で確認できます。`;
+  const slot = allySlotLabel(game.queue.length + 1);
+  const modeText = moveMode ? `ALT移動として選択中、${slot}として解決。` : selected ? `技法として選択中、${slot}として解決。` : "";
+  return `${ownerName}、${shown.name}。${cardTargetLabel(shown)}。${cardFaceEffect(shown)}${modeText} 詳細はカード選択後と遊び方で確認できます。移動命令にも変換できます。`;
 }
 
 function cardTargetLabel(shown) {
@@ -2280,40 +2300,42 @@ function cardFaceEffect(shown) {
   return shown.text.replace(/^(敵|味方|他の味方|空きマス)・射程\d+。/, "");
 }
 
+// Right-aligned hand row: registered cards (#order-queue) stay beside the hand, so the row keeps its card count and width.
 function renderHand() {
   el.hand.innerHTML = "";
+  el.handRow.style.setProperty("--row-cards", String(Math.max(1, game.hand.length + game.queue.length)));
   if (!game.hand.length) {
-    el.hand.innerHTML = `<p class="command-copy">命令実行中…</p>`;
+    el.hand.innerHTML = `<p class="hand-empty">命令実行中…</p>`;
     return;
   }
   const visibleHand = [...game.hand].sort((a, b) =>
     Number(cardDefs[b.cardId].ownerId === activeActorId) - Number(cardDefs[a.cardId].ownerId === activeActorId));
-  for (const instance of visibleHand) {
+  visibleHand.forEach((instance, index) => {
     const def = cardDefs[instance.cardId];
     const owner = getUnit(def.ownerId);
     const isLegacy = !owner || owner.hp <= 0;
     const shown = isLegacy ? getLegacy(def.ownerId) : def;
     const selected = game.selectedInstanceId === instance.instanceId;
     const moveMode = selected && game.mode === "move";
+    const offset = index - (visibleHand.length - 1) / 2;
     const button = document.createElement("button");
     button.type = "button";
     button.className = `card${selected ? " selected" : ""}${moveMode ? " move-mode" : ""}${isLegacy ? " legacy" : ""}`;
     button.style.setProperty("--owner-color", ownerMeta[def.ownerId].color);
+    button.style.setProperty("--fan-offset", String(offset));
+    button.style.setProperty("--fan-dist", String(Math.abs(offset)));
     button.disabled = game.phase !== "planning" || game.queue.length >= 3;
     button.setAttribute("aria-label", cardAriaLabel(def, shown, isLegacy, selected, moveMode));
     button.innerHTML = `
-      <span class="card-owner">${ownerMeta[def.ownerId].name}</span>
+      <span class="card-top"><span class="card-owner">${ownerMeta[def.ownerId].name}</span>${isLegacy ? `<span class="legacy-tag">LEGACY</span>` : ""}${selected ? `<span class="card-slot-badge" aria-hidden="true">→${allySlotLabel(game.queue.length + 1)}</span>` : ""}</span>
       <h3>${shown.name}</h3>
       <p class="card-target">${cardTargetLabel(shown)}</p>
-      <p>${cardFaceEffect(shown)}</p>
-      <div class="card-bottom">
-        <span class="card-move${moveMode ? " active-use-mode" : ""}">${moveMode ? "移動命令として使用中" : "ALTで移動"}</span>
-        ${isLegacy ? `<span class="legacy-tag">LEGACY</span>` : ""}
-      </div>
+      <p class="card-effect">${cardFaceEffect(shown)}</p>
+      ${moveMode ? `<span class="card-move active-use-mode">移動命令として使用中</span>` : ""}
     `;
     button.addEventListener("click", () => selectCard(instance.instanceId));
     el.hand.appendChild(button);
-  }
+  });
 }
 
 // Always three enemy order slots ①②③, fixed before planning. An empty slot names the defeated enemy that owns it.
@@ -2342,15 +2364,11 @@ function renderIntents() {
     const current = resolvingEvent?.kind === "enemy" && resolvingEvent.key === `enemy-${item.actorId}-${item.id}`;
     card.className = `intent-card${current ? " current" : ""}`;
     if (current) card.setAttribute("aria-current", "step");
+    // Effect details open from the enemy cell in the forecast column; the fixed top row never grows.
     card.innerHTML = `
-      ${badge}
-      <div class="intent-icon">${actor.icon}</div>
-      <div class="intent-body">
-        <h3><span>${actor.name}｜${item.name}</span><b class="intent-hp${shownActor.hp !== actor.hp ? " changed" : ""}">HP ${shownActor.hp !== actor.hp ? `${actor.hp}→${shownActor.hp}` : `${actor.hp}/${actor.maxHp}`}</b></h3>
-        <p class="intent-effect">${item.description}</p>
-        <p class="intent-target">${targetText}</p>
-        ${renderEffectDetails(item.id, `intent-${item.actorId}`)}
-      </div>
+      <h3>${badge}<span class="intent-name">${actor.name}｜${item.name}</span><b class="intent-hp${shownActor.hp !== actor.hp ? " changed" : ""}"><span class="intent-hp-label">HP </span>${shownActor.hp !== actor.hp ? `${actor.hp}→${shownActor.hp}` : `${actor.hp}/${actor.maxHp}`}</b></h3>
+      <p class="intent-effect">${item.description}</p>
+      <p class="intent-target">${targetText}</p>
     `;
     el.intents.appendChild(card);
   }
@@ -2375,32 +2393,43 @@ function renderSquad() {
   }
 }
 
+// Registered orders are placed cards in the hand row (not focusable); returning a cancelled middle order is a right-column button.
 function renderQueue() {
   el.queue.innerHTML = "";
+  el.queueReturnList.innerHTML = "";
   const forecast = game.phase === "planning" && game.queue.length ? predictTimeline() : null;
   const canReturn = queueReturnEligible();
   const planToken = movementPlanToken();
-  for (let i = 0; i < 3; i += 1) {
-    const action = game.queue[i];
-    const slot = document.createElement("div");
-    slot.className = `queue-slot${action ? " filled" : ""}`;
-    const outcome = action && forecast ? cancelledQueueOutcome(forecast, action) : null;
-    slot.innerHTML = action
-      ? `<span class="queue-number">${allySlotLabel(i + 1)}</span>${action.label}
-        ${outcome ? `<span class="queue-prediction${outcome.status === "cancelled" ? " cancelled" : ""}">予測：${outcome.status === "cancelled" ? `取消・${escapeEffectText(outcome.reason)}` : escapeEffectText(outcome.summary)}</span>` : ""}`
-      : `<span class="queue-number">${allySlotLabel(i + 1)}</span>命令待機`;
-    if (action && canReturn && i < game.queue.length - 1 && outcome?.status === "cancelled") {
+  game.queue.forEach((action, i) => {
+    const slotLabel = allySlotLabel(i + 1);
+    const outcome = forecast ? cancelledQueueOutcome(forecast, action) : null;
+    const cancelled = outcome?.status === "cancelled";
+    const def = cardDefs[action.cardId];
+    const placed = document.createElement("li");
+    placed.className = `card placed${cancelled ? " cancelled" : ""}`;
+    placed.style.setProperty("--owner-color", ownerMeta[def.ownerId].color);
+    placed.setAttribute("aria-label", `${slotLabel} 登録済み、${action.label}${outcome ? `、予測：${cancelled ? `取消・${outcome.reason}` : outcome.summary}` : ""}`);
+    placed.innerHTML = `
+      <span class="queue-number">${slotLabel}</span>
+      <h3>${escapeEffectText(action.label)}</h3>
+      ${cancelled ? `<span class="queue-prediction cancelled">取消予定</span>` : ""}
+    `;
+    el.queue.appendChild(placed);
+    if (canReturn && i < game.queue.length - 1 && cancelled) {
+      const row = document.createElement("div");
+      row.className = "queue-return-item";
+      row.innerHTML = `<p>${slotLabel} ${escapeEffectText(action.label)}：予測で取消（${escapeEffectText(outcome.reason)}）</p>`;
       const button = document.createElement("button");
       button.type = "button";
       button.className = "queue-return-button";
       button.dataset.returnInstanceId = action.instance.instanceId;
       button.textContent = "取消命令を外して手札へ戻す";
-      button.setAttribute("aria-label", `${allySlotLabel(i + 1)} ${action.label}、予測で取消、理由：${outcome.reason}。手札へ戻す`);
+      button.setAttribute("aria-label", `${slotLabel} ${action.label}、予測で取消、理由：${outcome.reason}。手札へ戻す`);
       button.addEventListener("click", () => returnCancelledQueueAction(action.instance.instanceId, planToken, button));
-      slot.appendChild(button);
+      row.appendChild(button);
+      el.queueReturnList.appendChild(row);
     }
-    el.queue.appendChild(slot);
-  }
+  });
 
   if (el.queueReturnStatus.textContent !== queueReturnMessage) el.queueReturnStatus.textContent = queueReturnMessage;
 
@@ -2552,12 +2581,11 @@ function renderTimeline() {
     )));
     step.setAttribute("aria-pressed", String(Boolean(game.phase === "planning" && isSelected)));
     if (isCurrent) step.setAttribute("aria-current", "step");
+    // Two lines in the left column: slot, name｜action, then target and result (the second line hides on short screens).
     step.innerHTML = `
       <span class="timeline-index">${orderLabel}</span>
-      <span class="timeline-name">${view.name}</span>
-      <span class="timeline-action">${cancelled ? "取消：" : ""}${view.action}</span>
-      <span class="timeline-target">対象：${targetLabel}</span>
-      <span class="timeline-result${outcome ? " predicted" : ""}">${resultLabel}</span>
+      <span class="timeline-main"><span class="timeline-name">${view.name}</span>｜<span class="timeline-action">${cancelled ? "取消：" : ""}${view.action}</span></span>
+      <span class="timeline-sub"><span class="timeline-target">対象：${targetLabel}</span> <span class="timeline-result${outcome ? " predicted" : ""}">${resultLabel}</span></span>
     `;
     step.disabled = game.phase !== "planning" || provisional;
     step.addEventListener("focus", () => {
@@ -2728,8 +2756,8 @@ function renderTimelineDetail(selection, forecast, events) {
   if (selection) {
     el.timelineDetail.hidden = false;
     el.timelineDetail.innerHTML = `
-      <div class="timeline-detail-title"><span>この命令の直前</span><b>${eventSlotLabel(selection.events[selection.eventIndex])}</b></div>
-      <p>この時点の位置・HP・状態から対象を選択します。対象確定後に後続イベントを再予測します。</p>
+      <div class="timeline-detail-title sr-only"><span>この命令の直前</span><b>${eventSlotLabel(selection.events[selection.eventIndex])}</b></div>
+      <p class="sr-only">この時点の位置・HP・状態から対象を選択します。対象確定後に後続イベントを再予測します。</p>
       ${renderEffectDetails(effectIdForEvent(selection.events[selection.eventIndex]), "selection")}
     `;
     return;
@@ -2869,9 +2897,98 @@ function renderControls() {
     }
     el.modeHelp.textContent = legacy
       ? "持ち主が倒れたため、遺志として使用"
-      : `${allySlotLabel(game.queue.length + 1)}として解決（${enemySlotLabel(game.queue.length + 1)}の直前）。効果詳細は行動予測の下で確認できます。`;
+      : `${allySlotLabel(game.queue.length + 1)}として解決（${enemySlotLabel(game.queue.length + 1)}の直前）。`;
     el.instruction.textContent = `この命令の直前：${shown.name}の対象を選んでください。`;
   }
+}
+
+// Right column view (display only): card > event > actor > plan. CSS shows each view's parts; hidden attributes still win.
+let selectionPanelView = null;
+function selectionView() {
+  if (game.phase === "planning" && selectedCard() && selectedDef()) return "card";
+  if (game.phase === "resolving" || (game.phase === "planning" && (Number.isInteger(game.previewIndex) || activeEnemyTrace()))) return "event";
+  if (game.phase === "planning" && activeActorId && getUnit(activeActorId)?.hp > 0) return "actor";
+  return "plan";
+}
+
+function selectionTitleText(view) {
+  if (view === "card") {
+    const card = selectedCard();
+    const def = cardDefs[card.cardId];
+    const owner = getUnit(def.ownerId);
+    if (game.mode === "move") return `移動命令（${def.name}を消費）`;
+    if (!owner || owner.hp <= 0) return `${ownerMeta[def.ownerId].name}の遺志｜${getLegacy(def.ownerId).name.replace("遺志：", "")}`;
+    return `${owner.name}｜${def.name}`;
+  }
+  if (view === "event") {
+    const forecast = currentForecast() || predictTimeline(buildResolutionEvents());
+    const event = forecast?.events[game.phase === "resolving" ? game.timelineCursor : game.previewIndex];
+    if (event) {
+      const eventView = timelineEventView(event);
+      return `${eventSlotLabel(event)} ${eventView.name}｜${eventView.action}`;
+    }
+    return "行動予測";
+  }
+  if (view === "actor") {
+    const actor = getUnit(activeActorId);
+    return `${actor.name} HP ${actor.hp}/${actor.maxHp}`;
+  }
+  return game.phase === "planning" && game.queue.length ? "全行動後の予測" : "選択なし";
+}
+
+function renderSelectionPanel() {
+  const view = selectionView();
+  el.selectionPanel.dataset.view = view;
+  const title = selectionTitleText(view);
+  if (el.selectionTitle.textContent !== title) el.selectionTitle.textContent = title;
+  if (selectionPanelView !== view) {
+    selectionPanelView = view;
+    el.selectionBody.scrollTop = 0;
+  }
+}
+
+// act-29-fix-02 (display only): when a registration fills the plan (3 orders) or leaves the selected ally with no command
+// that has a target or a move cell, the right column goes back to the plan view, where 手札へ戻す and the plan are.
+let renderedQueueLength = 0;
+function actorHasUsableCommand(unitId) {
+  return game.hand.some(card => cardDefs[card.cardId].ownerId === unitId && actorTechniqueCandidate(card).targets.length > 0)
+    || actorMoveCandidate(unitId).targets.length > 0;
+}
+
+function closeSpentActorView() {
+  const registered = game.queue.length > renderedQueueLength;
+  renderedQueueLength = game.queue.length;
+  if (!registered || game.phase !== "planning" || !activeActorId || selectedCard() || actorChoice) return;
+  if (game.queue.length >= 3 || !actorHasUsableCommand(activeActorId)) clearActorView();
+}
+
+// act-29-fix-02 (display only): the status text of the selected ally (actor view) or of the units on the highlighted target
+// cells (card view), from the state the board shows, so touch players can read what the chips mean without the popover.
+let selectionStatusesHtml = "";
+function renderSelectionStatuses() {
+  const view = selectionView();
+  const state = view === "actor" || view === "card" ? timelineDisplayContext().state : null;
+  const units = !state ? []
+    : view === "actor" ? [simGetUnit(state, activeActorId)].filter(Boolean)
+    : validCells().map(cell => simUnitAt(state, cell.x, cell.y)).filter(Boolean);
+  const rows = units.filter(unit => unit.hp > 0).flatMap(unit => activeStatusEntries(unit).map(([key, meta]) =>
+    `<li class="status-popover-item tone-${meta.tone}" data-unit-id="${unit.id}" data-status="${key}"><strong>${view === "card" ? `${unit.name}　` : ""}${meta.short(unit)}｜${meta.label}</strong><p>${meta.detail(unit)}</p></li>`));
+  const html = rows.length ? `<h3 class="kicker">${view === "card" ? "対象の状態" : "状態"}</h3><ul>${rows.join("")}</ul>` : "";
+  if (selectionStatusesHtml !== html) { selectionStatusesHtml = html; el.selectionStatuses.innerHTML = html; }
+  el.selectionStatuses.hidden = !rows.length;
+}
+
+function renderPiles() {
+  el.deckCount.textContent = String(game.deck.length);
+  el.discardCount.textContent = String(game.discard.length);
+}
+
+// 続き cue (display only): while the right column body has content below its visible part, the stage gets data-more,
+// which shows a fade and 「続き」 at the bottom edge. Updated on render, scroll, size changes and body mutations.
+function updateSelectionMore() {
+  const body = el.selectionBody;
+  const more = body.scrollHeight - body.clientHeight - body.scrollTop > 2;
+  if (el.selectionStage.hasAttribute("data-more") !== more) el.selectionStage.toggleAttribute("data-more", more);
 }
 
 let modalReturnFocus = null;
@@ -3018,14 +3135,26 @@ el.guideNext.addEventListener("click", () => {
   if (turnGuide.step === turnGuideSteps.length - 1) { closeTurnGuide(); return; }
   turnGuide.step += 1;
   renderTurnGuide();
+  // The guide is the first item of the right column body; show the new step's heading, not only its buttons.
+  el.selectionBody.scrollTop = 0;
   el.guideNext.focus({ preventScroll: true });
 });
 el.guideBack.addEventListener("click", () => {
   if (!turnGuide.active || turnGuide.step === 0) return;
   turnGuide.step -= 1;
   renderTurnGuide();
+  el.selectionBody.scrollTop = 0;
   el.guideBack.focus({ preventScroll: true });
 });
+// 続き cue triggers besides render(): scrolling, body size changes and content changes (details, live text, guide).
+let selectionMoreFrame = 0;
+const scheduleSelectionMore = () => {
+  if (selectionMoreFrame) return;
+  selectionMoreFrame = requestAnimationFrame(() => { selectionMoreFrame = 0; updateSelectionMore(); });
+};
+el.selectionBody.addEventListener("scroll", updateSelectionMore, { passive: true });
+if (typeof ResizeObserver === "function") new ResizeObserver(scheduleSelectionMore).observe(el.selectionBody);
+if (typeof MutationObserver === "function") new MutationObserver(scheduleSelectionMore).observe(el.selectionBody, { subtree: true, childList: true, characterData: true, attributes: true });
 el.guideLook.addEventListener("click", () => {
   if (!turnGuide.active || game.phase !== "planning") return;
   const target = document.querySelector(turnGuideSteps[turnGuide.step].target);
