@@ -1,5 +1,5 @@
 const SIZE = 6;
-const GAME_VERSION = "ACT 30";
+const GAME_VERSION = "ACT 32";
 const SLOT_MARK = ["①", "②", "③"];
 // ACT30 enemy team deck: 15 cards, five per enemy. This order is the card number order (initial deck order and tie order).
 // Numbers mirror resolveSimEnemy, which does not read this table. Target types name the user's side generically
@@ -253,7 +253,7 @@ function playlogTurnResult(forecast) {
   };
 }
 
-// Short-lived reading state, outside combat and opt-in note scenes.
+// Short-lived reading state, outside combat and the play log.
 const movementUI = { battleGeneration: 0, queueGeneration: 0, open: new Set(), returnTo: null };
 let enemyTrace = null; // Display-only selection, bound to one event and one plan generation.
 let queueReturnMessage = "";
@@ -3216,7 +3216,7 @@ function restoreGameDialogFocus(preferred, battlefieldFallback = el.help) {
 
 function syncModalInteraction() {
   if (!el.modal.hidden) {
-    // Preserve the one existing note control, including listeners and accessible count.
+    // Preserve the one comment control, including listeners and its accessible comment count.
     if (el.notesButton.parentNode !== el.modalActions) el.modalActions.appendChild(el.notesButton);
     el.main.inert = true;
     el.modalHelp.hidden = el.modal.dataset.help === "true";
@@ -3496,37 +3496,15 @@ document.addEventListener("pointerdown", event => {
   modalPointerPress = { generation: modalGeneration, target: event.target?.closest?.("button") };
 }, true);
 
-// Display-only, detached summaries for opt-in playtest notes. Never retain combat references.
-function capturePlaytestScene() {
-  const card = game.hand.find(item => item.instanceId === game.selectedInstanceId);
-  const def = card && cardDefs[card.cardId];
-  const selectionContext = game.phase === "planning" ? selectionTimelineContext() : null;
-  let preview = { kind: "current", eventIndex: null, eventKey: null, label: "現在盤面" };
-  if (game.phase === "resolving") {
-    const index = game.timelineCursor;
-    preview = { kind: "resolving", eventIndex: index >= 0 ? index : null,
-      eventKey: game.activeForecast?.events[index]?.key || null, label: "作戦解決中" };
-  } else if (selectionContext) {
-    preview = { kind: "selection-before", eventIndex: selectionContext.eventIndex,
-      eventKey: selectionContext.events[selectionContext.eventIndex]?.key || null, label: "選択した命令の直前" };
-  } else if (game.phase === "planning" && game.queue.length) {
-    const index = game.previewIndex;
-    preview = Number.isInteger(index)
-      ? { kind: "event-after", eventIndex: index, eventKey: buildResolutionEvents()[index]?.key || null,
-          label: `行動順 ${index + 1} の直後` }
-      : { kind: "final", eventIndex: null, eventKey: null, label: "全行動後の最終予測" };
-  }
-  return {
-    capturedAt: new Date().toISOString(), gameVersion: GAME_VERSION, turn: game.turn, phase: game.phase,
-    selection: def ? { cardId: card.cardId, cardName: getUnit(def.ownerId)?.hp <= 0 ? getLegacy(def.ownerId).name : def.name,
-      mode: game.mode, moveUnitId: game.moveUnitId } : null,
-    orders: game.queue.slice(0, 3).map((action, index) => ({
-      index: index + 1, cardId: action.cardId, actor: getUnit(action.actorId)?.name || action.actorId,
-      action: action.label, mode: action.mode, speed: allySlotLabel(index + 1),
-      target: timelineTargetLabel({ kind: "player", payload: action })
-    })),
-    preview
-  };
+// Displayed card names for the comment dialog's scene line (a card whose owner is down reads as its Legacy).
+function commentCardNames() {
+  return Object.fromEntries(Object.entries(cardDefs).map(([cardId, def]) => [cardId, getUnit(def.ownerId)?.hp <= 0 ? getLegacy(def.ownerId).name : def.name]));
+}
+
+// Slot numbers of this turn's committed enemy orders by enemy card instance, for naming 敵①②③ in the comment dialog's scene line.
+// Read when the dialog opens, together with captureCommentContext, so a turn that ends underneath does not renumber the scene.
+function commentEnemySlots() {
+  return Object.fromEntries(game.intents.map((item, index) => [item.instanceId, item.slot ?? index + 1]));
 }
 
 // Id-based comment scene for the play log, captured when the comment dialog opens. Reads only; never changes game or rng.

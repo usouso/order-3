@@ -22,7 +22,7 @@
         <h2 id="battlefield-heading" class="field-name" tabindex="-1">黄昏の演習場</h2>
       </div>
       <div class="topbar-tools">
-        <button id="notes-button" class="notes-trigger" aria-haspopup="dialog" aria-controls="notes-dialog" aria-label="感想や改善案のメモを開く。端末保存0件">感想メモ</button>
+        <button id="notes-button" class="notes-trigger" aria-haspopup="dialog" aria-controls="notes-dialog" aria-label="ひとことコメントとプレイログ。このランのコメント0件">ひとこと</button>
         <button class="icon-button" id="help-button" aria-label="遊び方・全ての技の説明" aria-haspopup="dialog" aria-controls="modal">?</button>
       </div>
     </header>
@@ -178,87 +178,62 @@
     </div>
   </div>
 
+  <p id="notes-live" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></p>
+
   <dialog id="notes-dialog" class="notes-dialog" aria-labelledby="notes-title">
     <header class="notes-header">
-      <h2 id="notes-title">試遊メモ</h2>
+      <h2 id="notes-title">ひとこと・プレイログ</h2>
       <button id="notes-close" type="button">閉じる</button>
     </header>
     <div class="notes-scroll">
-      <div id="notes-editor">
-      <div class="notes-toolbar"><button id="notes-new" type="button">新しいメモ</button><span id="notes-count">端末保存 0件</span></div>
-      <p class="notes-notice">このブラウザへ自動保存します。制作へ送るには「制作に送る」からフォームで送信してください。</p>
-      <fieldset class="notes-kinds"><legend>種類</legend>
-        <label><input type="radio" name="note-kind" value="impression" checked>感想</label>
-        <label><input type="radio" name="note-kind" value="idea">改善案</label>
-        <label><input type="radio" name="note-kind" value="bug">不具合</label>
-      </fieldset>
-      <label class="notes-body-label" for="notes-body">気付いたこと</label>
-      <textarea id="notes-body" rows="6" placeholder="面白かったこと、分かりにくかったこと…"></textarea>
-      <p id="notes-length" class="notes-notice"></p>
-      <label class="notes-scene-toggle"><input id="notes-attach" type="checkbox" checked>この場面を添付</label>
-      <p class="notes-notice">TURN・選択・最大3命令・予測段階・ゲーム版だけを添付します。</p>
-      <pre id="notes-scene" class="notes-scene"></pre>
-      <button id="notes-scene-update" type="button">現在の場面に更新</button>
-      <p id="notes-conflict" class="notes-warning" role="status" hidden></p>
-      <div id="notes-error" class="notes-warning" role="alert" hidden></div>
-      <div id="notes-raw-actions" class="notes-actions" hidden>
-        <button id="notes-raw-copy" type="button">元の保存データをコピー</button>
-        <button id="notes-raw-export" type="button">元の保存データを書き出す</button>
-      </div>
-      <div id="notes-close-choice" class="notes-warning" hidden>
-        <p>端末へ保存できていません。閉じても本文はこのタブ内に保持します。再読込前にコピーか書き出しで残してください。</p>
-        <div class="notes-actions">
-          <button id="notes-copy-close" type="button">コピーしてから閉じる</button>
-          <button id="notes-memory-close" type="button">このタブ内だけ保持して閉じる</button>
-          <button id="notes-close-back" type="button">戻る</button>
+      <section id="notes-main" aria-label="ひとことコメント">
+        <p id="notes-scene" class="notes-scene"></p>
+        <label class="notes-label" for="notes-input">ひとことコメント（140字まで）</label>
+        <div class="notes-entry">
+          <input id="notes-input" type="text" autocomplete="off" enterkeyhint="done" aria-describedby="notes-counter notes-input-reason">
+          <button id="notes-record" class="notes-primary" type="button" disabled>記録する</button>
         </div>
-      </div>
-      <section class="notes-share-area" aria-label="制作への共有">
-        <button id="notes-share" class="notes-share" type="button">制作に送る <small>フォームで内容を確認</small></button>
-        <p class="notes-notice">種類・メモ番号・ゲーム版も送ります。場面は選んだときだけ添付します。</p>
-        <p id="notes-share-status" role="status"></p>
-        <button id="notes-export-one" type="button">このメモをMarkdownで書き出す</button>
+        <p class="notes-hint"><span id="notes-counter">0/140</span> <span id="notes-input-reason"></span></p>
+        <p id="notes-run-count" class="notes-notice">このランのコメント 0件（書き出し画面で確認・削除できます）</p>
+        <div id="notes-storage" class="notes-storage" role="status" aria-live="polite"></div>
+        <p id="notes-legacy" class="notes-notice" hidden></p>
+        <button id="notes-export-open" class="notes-wide" type="button">ログを書き出す…</button>
+        <p class="notes-notice">ゲームからは何も送信しません。書き出したファイルを制作者に送ったときだけ届きます。</p>
       </section>
-      </div>
-      <section id="notes-confirm" class="notes-confirm" aria-label="送る内容の確認" hidden>
-        <h3>送る内容の確認</h3>
-        <p class="notes-notice">宛先: ORDER//3 制作（Googleフォーム）</p>
-        <p id="notes-confirm-scene" class="notes-notice"></p>
-        <p class="notes-notice">Googleフォームへ内容を渡して別タブで開きます。ログイン不要・回答は一般公開しません。フォームの「送信」を押すと制作へ届きます。開くだけでは回答は送信されません。</p>
-        <p id="notes-confirm-mode" class="notes-notice"></p>
-        <label for="notes-confirm-text">送る全文（省略なし・選択してコピーできます）</label>
-        <textarea id="notes-confirm-text" rows="8" readonly></textarea>
-        <div class="notes-actions">
-          <button id="notes-confirm-back" type="button">編集へ戻る</button>
-          <button id="notes-confirm-copy" type="button">送る全文をコピー</button>
-          <button id="notes-confirm-export" type="button">送る全文を書き出す</button>
+      <section id="notes-export" class="notes-export" aria-labelledby="notes-export-title" hidden>
+        <h3 id="notes-export-title" tabindex="-1">書き出す内容の確認</h3>
+        <p class="notes-notice">含むもの: ゲーム版、乱数シード、各ターンの手札・敵の手札と命令・登録命令・結果、考えた時間、画面幅の区分、コメント本文。含まないもの: 名前、メールアドレス、端末やブラウザーの情報、位置、正確な時刻。</p>
+        <p id="notes-compress-note" class="notes-warning" hidden>このブラウザーでは圧縮できないため、圧縮せずに書き出します</p>
+        <p id="notes-lock-note" class="notes-warning" hidden>このブラウザでは複数のタブで同時に記録を整理すると内容が失われることがあります。書き出しと削除は一つのタブで行ってください</p>
+        <fieldset class="notes-group">
+          <legend>書き出すラン</legend>
+          <ul id="notes-runs" class="notes-list"></ul>
+          <p id="notes-unreadable" class="notes-notice" hidden></p>
+        </fieldset>
+        <section class="notes-group" aria-labelledby="notes-comments-title">
+          <h4 id="notes-comments-title" tabindex="-1">書き出すコメント</h4>
+          <ul id="notes-comments" class="notes-list"></ul>
+        </section>
+        <section id="notes-legacy-export" class="notes-group" aria-label="以前の感想メモ" hidden>
+          <label class="notes-check"><input id="notes-legacy-include" type="checkbox"><span id="notes-legacy-label"></span></label>
+          <ul id="notes-legacy-list" class="notes-list"></ul>
+        </section>
+        <details id="notes-json-details" class="notes-json">
+          <summary>ファイルの中身をすべて表示（JSON）</summary>
+          <textarea id="notes-json" rows="10" readonly aria-label="書き出すファイルの中身（JSON）"></textarea>
+        </details>
+        <div id="notes-fallback" hidden>
+          <label class="notes-label" for="notes-fallback-text">ファイルを作れないため、全文を表示しています。選択してコピーできます。</label>
+          <textarea id="notes-fallback-text" rows="6" readonly></textarea>
+          <button id="notes-copy" class="notes-wide" type="button">全文をコピー</button>
         </div>
-        <button id="notes-form-open" class="notes-share" type="button">フォームを開く ↗</button>
-        <p id="notes-confirm-status" role="status"></p>
+        <p id="notes-export-status" class="notes-status" role="status" aria-live="polite"></p>
+        <div class="notes-actions">
+          <button id="notes-export-back" type="button">戻る</button>
+          <button id="notes-export-run" class="notes-primary" type="button">書き出す</button>
+        </div>
       </section>
-      <div id="notes-fallback" hidden>
-        <label for="notes-rescue">コピー・書き出しが使えない場合の全文（選択してコピーできます）</label>
-        <textarea id="notes-rescue" rows="6" readonly></textarea>
-      </div>
-      <p id="notes-action-status" role="status"></p>
-      <section id="notes-list-area" aria-labelledby="notes-list-title">
-        <h3 id="notes-list-title">保存したメモ</h3>
-        <ul id="notes-list" class="notes-list"></ul>
-      </section>
-      <div id="notes-all-actions" class="notes-actions">
-        <button id="notes-export-json" type="button">全メモを書き出す（JSON）</button>
-        <button id="notes-export-md" type="button">全メモを書き出す（Markdown）</button>
-      </div>
-      <p id="notes-privacy" class="notes-notice notes-privacy">別端末・別ブラウザには引き継がれません。プライベート閲覧の終了やサイトデータ削除で消えることがあります。大切なメモは書き出して残してください。</p>
     </div>
-    <footer id="notes-footer" class="notes-footer">
-      <p id="notes-save-status" aria-live="polite">本文を入力すると自動保存します</p>
-      <p class="notes-notice">端末への保存だけでは、制作側へは送信されていません。</p>
-      <div class="notes-actions">
-        <button id="notes-save" class="notes-save" type="button">端末に保存</button>
-        <button id="notes-copy" type="button">このメモをコピー</button>
-      </div>
-    </footer>
   </dialog>
   <script src="notes-core.js"></script>
   <script src="game.js"></script>
